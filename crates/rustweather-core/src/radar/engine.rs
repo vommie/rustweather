@@ -12,12 +12,13 @@ use rayon::prelude::*;
 use super::clouds;
 use super::dwd::{self, Lut, Projector};
 use super::layers::{self, KINDS, Kind};
+use super::model::{self, Model};
 use super::motion::{self, Field};
 use super::palette::{self, Ramp};
 use super::rainviewer;
-use super::temps::{self, Grid};
+use super::temps;
 use super::thumbs::Thumbs;
-use super::wind::{self, Field as WindField, Flow};
+use super::wind::{self, Field as WindField, Flow, Loaded as WindLoaded};
 use super::{FrameInfo, FrameState};
 use crate::error::{Error, Result};
 use crate::http::Http;
@@ -42,6 +43,8 @@ const WIND_FRAME: Duration = Duration::from_millis(33);
 const WIND_DELAY: Duration = Duration::from_millis(600);
 const WIND_MAX_AGE: Duration = Duration::from_secs(15 * 60);
 const WIND_RETRY: Duration = Duration::from_secs(60);
+const WIND_DWD_RETRY: Duration = Duration::from_secs(10 * 60);
+const METEO_PAUSE: Duration = Duration::from_secs(60 * 60);
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
@@ -104,6 +107,8 @@ pub enum Notice {
     Failed {
         text: String,
     },
+    /// What `Failed` said is over.
+    Solved,
 }
 
 pub enum Event {
@@ -167,11 +172,9 @@ pub enum Command {
         kind: Kind,
     },
     CloudsTime(Result<DateTime<Utc>>),
-    TempsLoaded(Result<Grid>),
+    TempsLoaded(Result<Model>),
     KeyChecked(bool),
-    WindLoaded {
-        result: Result<WindField>,
-    },
+    WindLoaded(WindLoaded),
     TileDone {
         base: bool,
         result: Result<()>,
@@ -245,6 +248,10 @@ pub fn start(setup: Setup, events: impl Fn(Event) + Send + 'static) -> Result<Ha
         wind: None,
         flow: None,
         wind_at: None,
+        wind_file: setup.cache_dir.join("wind-grid.bin"),
+        wind_dwd_retry: None,
+        meteo_pause: None,
+        problem_shown: false,
         wind_busy: false,
         wind_due: None,
         wind_frame: Instant::now(),
@@ -294,7 +301,7 @@ struct Worker {
     clouds_time: Option<(DateTime<Utc>, Instant)>,
     clouds_file: PathBuf,
     clouds_asked: Option<Instant>,
-    temp_grid: Option<Grid>,
+    temp_grid: Option<Model>,
     temp_file: PathBuf,
     temps_busy: bool,
     temps_retry: Option<Instant>,
@@ -310,6 +317,13 @@ struct Worker {
     wind: Option<WindField>,
     flow: Option<Flow>,
     wind_at: Option<Instant>,
+    wind_file: PathBuf,
+    /// The DWD failed: not before this again.
+    wind_dwd_retry: Option<Instant>,
+    /// Open-Meteo's limit is reached: not before this again.
+    meteo_pause: Option<Instant>,
+    /// A banner about temperatures or wind is on screen.
+    problem_shown: bool,
     wind_busy: bool,
     wind_due: Option<Instant>,
     wind_frame: Instant,
@@ -496,6 +510,8 @@ impl Worker {
                 self.layer_failed = false;
                 self.retry_at = None;
                 self.temps_retry = None;
+                self.wind_dwd_retry = None;
+                self.wind_due = Some(Instant::now());
                 self.fetch();
                 self.base_dirty = true;
             }
@@ -525,10 +541,12 @@ impl Worker {
                         self.temp_grid = Some(grid);
                         self.heat_shown = None;
                         self.show_temps();
+                        self.problem_over();
                     }
                     Err(error) => {
                         tracing::warn!(%error, "[Radar] Temperatures failed");
                         self.temps_retry = Some(Instant::now() + LAYER_RETRY);
+                        self.problem_shown = true;
                         self.emit(Event::Notice(Notice::Failed {
                             text: format!("Temperatures could not be loaded: {error}"),
                         }));
@@ -548,20 +566,7 @@ impl Worker {
                     }));
                 }
             },
-            Command::WindLoaded { result } => {
-                self.wind_busy = false;
-                self.wind_at = Some(Instant::now());
-                match result {
-                    Ok(field) => self.wind = Some(field),
-                    Err(e) => {
-                        tracing::warn!(error = %e, "[Radar] Wind failed");
-                        self.emit(Event::Notice(Notice::Fallback {
-                            text: "No wind data right now".into(),
-                        }));
-                        self.wind_due = Some(Instant::now() + WIND_RETRY);
-                    }
-                }
-            }
+            Command::WindLoaded(loaded) => self.wind_loaded(loaded),
             Command::KeyChecked(valid) => {
                 if !valid && !self.layer_failed {
                     self.layer_failed = true;
@@ -879,18 +884,54 @@ impl Worker {
         if !self.wind_on() || self.wind_busy || self.wind_due.is_none_or(|t| t > Instant::now()) {
             return;
         }
-        let fresh = self.wind_at.is_some_and(|t| t.elapsed() < WIND_MAX_AGE);
         self.wind_due = None;
-        if fresh && self.wind.as_ref().is_some_and(|f| f.covers(&self.view)) {
+        let (now, hour) = (Instant::now(), model::hour(Utc::now()));
+        let fresh = self.wind_at.is_some_and(|t| t.elapsed() < WIND_MAX_AGE);
+        if self.wind.as_ref().is_some_and(|f| f.enough(&self.view, hour, fresh)) {
+            self.wind_at = Some(now);
+            return;
+        }
+        let dwd = self.wind_dwd_retry.is_none_or(|t| t <= now);
+        let meteo = self.meteo_pause.is_none_or(|t| t <= now) && !self.wind.as_ref().is_some_and(|f| f.usable(hour));
+        if !dwd && !meteo {
+            self.wind_at = Some(now);
             return;
         }
         self.wind_busy = true;
-        let (http, tx, view) = (self.http.clone(), self.tx.clone(), self.view);
+        let (http, tx, view, file) = (self.http.clone(), self.tx.clone(), self.view, self.wind_file.clone());
         self.runtime.spawn(async move {
-            let _ = tx.send(Command::WindLoaded {
-                result: wind::fetch(&http, &view).await,
-            });
+            let loaded = wind::load(&http, &file, &view, hour, dwd, meteo).await;
+            let _ = tx.send(Command::WindLoaded(loaded));
         });
+    }
+
+    fn problem_over(&mut self) {
+        if std::mem::take(&mut self.problem_shown) {
+            self.emit(Event::Notice(Notice::Solved));
+        }
+    }
+
+    fn wind_loaded(&mut self, loaded: WindLoaded) {
+        self.wind_busy = false;
+        self.wind_at = Some(Instant::now());
+        if loaded.dwd_failed {
+            self.wind_dwd_retry = Some(Instant::now() + WIND_DWD_RETRY);
+        }
+        if loaded.meteo_limited {
+            self.meteo_pause = Some(Instant::now() + METEO_PAUSE);
+        }
+        if loaded.field.is_some() {
+            self.wind = loaded.field;
+            self.problem_over();
+        } else if self.wind.is_none() {
+            self.wind_due = Some(Instant::now() + WIND_RETRY);
+            if let Some(error) = loaded.problem {
+                self.problem_shown = true;
+                self.emit(Event::Notice(Notice::Failed {
+                    text: format!("Wind could not be loaded: {error}"),
+                }));
+            }
+        }
     }
 
     fn animate_wind(&mut self) {
@@ -954,7 +995,7 @@ impl Worker {
             return;
         }
         self.draw_heat();
-        let hour = temps::hour(Utc::now());
+        let hour = model::hour(Utc::now());
         let current = self.temp_grid.as_ref().is_some_and(|g| g.hour == hour);
         if current || self.temps_busy || self.temps_retry.is_some_and(|t| t > Instant::now()) {
             return;

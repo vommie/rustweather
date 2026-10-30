@@ -249,6 +249,7 @@ fn on_notice(app: &App, notice: Notice) {
         }
         Notice::Fallback { text } => set_status(app, &text, 2),
         Notice::Failed { text } => set_banner(app, &text, true, "Try now"),
+        Notice::Solved => set_banner(app, "", false, ""),
     }
 }
 
