@@ -1,17 +1,17 @@
-//! The temperature layer: values on a grid that follows the zoom, so labels keep their distance: zooming out shows fewer of them, zooming in
-//! more. A cell's place is fixed on the map, so its label moves with the map and each value is only fetched once. The heatmap blends the
-//! same values, so labels and colors together cost no more than one of them.
+//! Temperatures across the map. The labels belong to cities (`cities.rs`). The heatmap needs evenly spaced values, so it has a grid that
+//! follows the zoom. Everything is kept for a while, so each value is only fetched once.
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
+use super::cities;
 use crate::error::{Error, Result};
 use crate::http::Http;
 use crate::map::{Extent, View, from_unit};
 
-/// Wanted distance between two labels, in pixels.
+/// Wanted distance between two grid points, in pixels.
 const SPACING: f64 = 96.0;
 const MAX_LEVEL: i32 = 12;
 /// One request; each point counts toward Open-Meteo's daily limit, so a batch stays small.
@@ -24,6 +24,9 @@ const MIN_WEIGHT: f32 = 0.4;
 
 /// Zoom level, column, row.
 pub type Cell = (i32, i64, i64);
+
+/// A city's number in `cities.rs`.
+pub type CityId = u32;
 
 /// The grid level for a view: cells of about `SPACING` pixels.
 pub fn level(view: &View) -> i32 {
@@ -62,11 +65,6 @@ fn from_middle(view: &View, extra: i64) -> Vec<Cell> {
     out
 }
 
-/// The cells on screen, from the middle outward.
-pub fn visible(view: &View) -> Vec<Cell> {
-    from_middle(view, 0)
-}
-
 /// The cells the heatmap needs: it blends between cell centers, so one more on every side.
 pub fn around(view: &View) -> Vec<Cell> {
     from_middle(view, 1)
@@ -86,6 +84,7 @@ pub struct Heat {
 #[derive(Default)]
 pub struct Store {
     values: HashMap<Cell, (f32, Instant)>,
+    cities: HashMap<CityId, (f32, Instant)>,
 }
 
 impl Store {
@@ -98,6 +97,23 @@ impl Store {
             .collect()
     }
 
+    /// The cities of a view without a value that is still good.
+    pub fn missing_cities(&self, cities: &[CityId]) -> Vec<CityId> {
+        cities
+            .iter()
+            .filter(|c| self.cities.get(c).is_none_or(|(_, at)| at.elapsed() >= MAX_AGE))
+            .take(BATCH)
+            .copied()
+            .collect()
+    }
+
+    pub fn insert_cities(&mut self, found: Vec<(CityId, f32)>) {
+        let now = Instant::now();
+        self.cities.retain(|_, (_, at)| at.elapsed() < MAX_AGE * 2);
+        self.cities
+            .extend(found.into_iter().map(|(city, value)| (city, (value, now))));
+    }
+
     pub fn insert(&mut self, found: Vec<(Cell, f32)>) {
         let now = Instant::now();
         self.values.retain(|_, (_, at)| at.elapsed() < MAX_AGE * 2);
@@ -105,20 +121,14 @@ impl Store {
             .extend(found.into_iter().map(|(cell, value)| (cell, (value, now))));
     }
 
-    /// The labels of a view: pixel position and temperature.
-    pub fn labels(&self, view: &View) -> Vec<(f32, f32, f32)> {
-        visible(view)
+    /// The labels of a view: city, pixel position and temperature.
+    pub fn labels(&self, view: &View) -> Vec<(&'static str, f32, f32, f32)> {
+        cities::visible(view)
             .into_iter()
-            .filter_map(|cell| {
-                let (value, _) = self.values.get(&cell)?;
-                let (lon, lat) = center(cell);
-                // A cell of the wrapped map can lie one world to the side.
-                let (cx, _) = crate::map::to_unit(view.lon, view.lat);
-                let (ux, _) = crate::map::to_unit(lon, lat);
-                let shift = (cx - ux).round();
-                let x = (ux + shift - cx) * view.scale() + f64::from(view.width) / 2.0;
-                let (_, y) = view.pixel_of(lon, lat);
-                Some((x as f32, y as f32, *value))
+            .filter_map(|id| {
+                let (value, _) = self.cities.get(&id)?;
+                let (name, x, y) = cities::on_view(id, view)?;
+                Some((name, x as f32, y as f32, *value))
             })
             .collect()
     }
@@ -188,8 +198,8 @@ impl Store {
     }
 }
 
-pub async fn fetch(http: &Http, cells: &[Cell]) -> Result<Vec<(Cell, f32)>> {
-    let places: Vec<(f64, f64)> = cells.iter().map(|c| center(*c)).collect();
+/// The temperature at each place, in the order asked. Longitude first.
+async fn fetch_places(http: &Http, places: &[(f64, f64)]) -> Result<Vec<Option<f32>>> {
     let lats: Vec<String> = places.iter().map(|p| format!("{:.3}", p.1)).collect();
     let lons: Vec<String> = places.iter().map(|p| format!("{:.3}", p.0)).collect();
     let url = format!(
@@ -203,13 +213,32 @@ pub async fn fetch(http: &Http, cells: &[Cell]) -> Result<Vec<(Cell, f32)>> {
         Value::Array(list) => list,
         single => vec![single],
     };
-    if list.len() != cells.len() {
+    if list.len() != places.len() {
         return Err(Error::format("Open-Meteo", format!("{} temperatures", list.len())));
     }
+    Ok(list
+        .iter()
+        .map(|point| point["current"]["temperature_2m"].as_f64().map(|v| v as f32))
+        .collect())
+}
+
+pub async fn fetch(http: &Http, cells: &[Cell]) -> Result<Vec<(Cell, f32)>> {
+    let places: Vec<(f64, f64)> = cells.iter().map(|c| center(*c)).collect();
+    let values = fetch_places(http, &places).await?;
     Ok(cells
         .iter()
-        .zip(list)
-        .filter_map(|(cell, point)| Some((*cell, point["current"]["temperature_2m"].as_f64()? as f32)))
+        .zip(values)
+        .filter_map(|(cell, value)| Some((*cell, value?)))
+        .collect())
+}
+
+pub async fn fetch_cities(http: &Http, ids: &[CityId]) -> Result<Vec<(CityId, f32)>> {
+    let places: Vec<(f64, f64)> = ids.iter().filter_map(|id| cities::place(*id)).collect();
+    let values = fetch_places(http, &places).await?;
+    Ok(ids
+        .iter()
+        .zip(values)
+        .filter_map(|(id, value)| Some((*id, value?)))
         .collect())
 }
 
@@ -228,24 +257,24 @@ mod tests {
     }
 
     #[test]
-    fn labels_keep_their_distance_at_every_zoom() {
+    fn the_grid_stays_small_at_every_zoom() {
         for zoom in [4.0, 5.3, 6.7, 8.0, 10.0] {
-            let count = visible(&view(zoom)).len();
-            assert!((30..=240).contains(&count), "zoom {zoom}: {count} labels");
+            let count = around(&view(zoom)).len();
+            assert!((30..=400).contains(&count), "zoom {zoom}: {count} points");
         }
     }
 
     #[test]
-    fn a_cell_stays_on_its_place_when_the_map_moves() {
+    fn a_city_label_stays_on_its_place_when_the_map_moves() {
         let v = view(6.0);
         let mut store = Store::default();
-        store.insert(visible(&v).into_iter().map(|c| (c, 9.0)).collect());
+        store.insert_cities(cities::visible(&v).into_iter().map(|c| (c, 9.0)).collect());
         let a = store.labels(&v)[0];
         let moved = v.panned(30.0, 10.0);
         let hit = store
             .labels(&moved)
             .iter()
-            .any(|b| (b.0 - a.0 - 30.0).abs() < 0.5 && (b.1 - a.1 - 10.0).abs() < 0.5);
+            .any(|b| b.0 == a.0 && (b.1 - a.1 - 30.0).abs() < 0.5 && (b.2 - a.2 - 10.0).abs() < 0.5);
         assert!(hit);
     }
 
@@ -281,7 +310,7 @@ mod tests {
     #[test]
     fn only_what_is_missing_gets_fetched() {
         let v = view(6.0);
-        let cells = visible(&v);
+        let cells = around(&v);
         let mut store = Store::default();
         assert_eq!(store.missing(&cells).len(), cells.len().min(BATCH));
         store.insert(cells.iter().map(|c| (*c, 1.0)).collect());

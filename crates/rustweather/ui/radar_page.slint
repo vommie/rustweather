@@ -102,6 +102,14 @@ export component RadarPage inherits Rectangle {
     in property <string> map-credit;
     in property <[TempLabel]> temps;
     in property <[AlertData]> warning-panel;
+    in property <string> warning-path;
+    in property <LayerRect> warning-rect;
+    in property <float> warning-path-width;
+    in property <float> warning-path-height;
+    in property <string> hover-path;
+    in property <LayerRect> hover-rect;
+    in property <float> hover-path-width;
+    in property <float> hover-path-height;
     in property <string> warning-area;
     in property <bool> full;
     callback resized(length, length);
@@ -122,6 +130,7 @@ export component RadarPage inherits Rectangle {
     callback mini();
     callback banner-act();
     callback warnings-close();
+    callback hover(length, length);
     callback pick-map(int);
     callback map-picker(bool);
     property <bool> map-open;
@@ -139,17 +148,47 @@ export component RadarPage inherits Rectangle {
     Image { x: root.clouds-rect.x; y: root.clouds-rect.y; width: root.clouds-rect.width; height: root.clouds-rect.height; source: root.clouds; image-fit: fill; }
     Image { x: root.warnings-rect.x; y: root.warnings-rect.y; width: root.warnings-rect.width; height: root.warnings-rect.height; source: root.warnings; image-fit: fill; opacity: 0.65; }
     Image { x: root.lightning-rect.x; y: root.lightning-rect.y; width: root.lightning-rect.width; height: root.lightning-rect.height; source: root.lightning; image-fit: fill; }
+    if root.hover-path != "" && root.hover-path != root.warning-path: Path {
+        x: root.hover-rect.x;
+        y: root.hover-rect.y;
+        width: root.hover-rect.width;
+        height: root.hover-rect.height;
+        viewbox-width: root.hover-path-width;
+        viewbox-height: root.hover-path-height;
+        commands: root.hover-path;
+        fill: Theme.text.with-alpha(0.12);
+        stroke: Theme.text.with-alpha(0.6);
+        stroke-width: 1px;
+    }
+    if root.warning-path != "": Path {
+        x: root.warning-rect.x;
+        y: root.warning-rect.y;
+        width: root.warning-rect.width;
+        height: root.warning-rect.height;
+        viewbox-width: root.warning-path-width;
+        viewbox-height: root.warning-path-height;
+        commands: root.warning-path;
+        fill: Theme.accent.with-alpha(0.25);
+        stroke: Theme.accent;
+        stroke-width: 2.5px;
+    }
     Image { width: 100%; height: 100%; source: root.rain; image-fit: fill; }
     Image { width: 100%; height: 100%; source: root.wind; image-fit: fill; }
     Image { width: 100%; height: 100%; source: root.labels; image-fit: fill; }
     for t in root.temps: Rectangle {
         x: t.x - self.width / 2;
         y: t.y - self.height / 2;
-        width: 34px;
-        height: 20px;
+        width: pill.preferred-width;
+        height: 18px;
         border-radius: 5px;
         background: t.color;
-        Text { text: t.text; color: #ffffff; font-size: 12px; font-weight: 700; }
+        pill := HorizontalLayout {
+            padding-left: 5px;
+            padding-right: 5px;
+            spacing: 4px;
+            Text { text: t.text; color: #ffffff; font-size: 12px; font-weight: 700; vertical-alignment: center; }
+            Text { text: t.name; color: #ffffff; font-size: 10px; vertical-alignment: center; overflow: elide; max-width: 76px; }
+        }
     }
     for c in root.cities: Text {
         x: c.x + 6px;
@@ -216,6 +255,25 @@ export component RadarPage inherits Rectangle {
         }
     }
 
+    // Asks about the area under the pointer once it has come to rest, not on its way there.
+    property <length> rest-x;
+    property <length> rest-y;
+    property <int> rest-ticks;
+    Timer {
+        interval: 150ms;
+        running: root.layer-alerts && touch.has-hover && !touch.pressed;
+        triggered => {
+            if touch.mouse-x != root.rest-x || touch.mouse-y != root.rest-y {
+                root.rest-x = touch.mouse-x;
+                root.rest-y = touch.mouse-y;
+                root.rest-ticks = 0;
+            } else {
+                root.rest-ticks += 1;
+                if root.rest-ticks == 2 { root.hover(root.rest-x, root.rest-y); }
+            }
+        }
+    }
+
     ThinBar { y: 0; progress: root.loading; visible: root.loading > 0; }
 
     VerticalLayout {
@@ -242,7 +300,7 @@ export component RadarPage inherits Rectangle {
             Chip { tip: root.clouds-label + ": satellite picture of the clouds, a new one comes every three hours"; icon: Icons.cloud; has-icon: true; checked: root.layer-clouds; clicked => { root.toggle-layer(1); } }
             Chip { tip: "Lightning: strikes of the last hours, from the DWD"; icon: Icons.bolt; has-icon: true; checked: root.layer-lightning; clicked => { root.toggle-layer(2); } }
             Chip { tip: "Wind: the lines flow with the current wind, the scale is at the bottom right"; icon: Icons.wind; has-icon: true; checked: root.layer-wind; clicked => { root.toggle-layer(3); } }
-            Chip { tip: "Temperature: current values across the map, the closer you zoom in the more places"; icon: Icons.temperature; has-icon: true; checked: root.layer-temps; clicked => { root.toggle-layer(4); } }
+            Chip { tip: "Temperature: current values of the cities, the closer you zoom in the more of them"; icon: Icons.temperature; has-icon: true; checked: root.layer-temps; clicked => { root.toggle-layer(4); } }
             Chip { tip: "Heatmap: current temperature as colors over the map, the scale is at the bottom right"; icon: Icons.palette; has-icon: true; checked: root.layer-heat; clicked => { root.toggle-layer(5); } }
         }
     }
@@ -331,8 +389,8 @@ export component RadarPage inherits Rectangle {
     }
 
     if root.probe-title != "": Rectangle {
-        x: min(root.probe-x + 10px, root.width - self.width - 8px);
-        y: min(root.probe-y + 10px, root.height - self.height - 60px);
+        x: root.probe-x + 10px;
+        y: root.probe-y + 10px;
         width: 210px;
         height: probe-box.preferred-height + 14px;
         background: Theme.surface;
@@ -344,7 +402,12 @@ export component RadarPage inherits Rectangle {
             Text { text: root.probe-title; color: Theme.text; font-size: 12px; font-weight: 600; }
             Text { text: root.probe-text; color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
         }
-        TouchArea { clicked => { root.probe-close(); } }
+        TipArea {
+            tip: "Right-click to close";
+            pointer-event(e) => {
+                if e.button == PointerEventButton.right && e.kind == PointerEventKind.down { root.probe-close(); }
+            }
+        }
     }
 
     // Legend and scale.

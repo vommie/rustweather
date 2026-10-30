@@ -12,6 +12,7 @@ mod radar_ui;
 mod settings_ui;
 mod traffic_ui;
 mod tray;
+mod warning_ui;
 mod weather;
 mod window_state;
 

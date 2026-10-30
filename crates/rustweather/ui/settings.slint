@@ -434,7 +434,7 @@ export component SettingsWindow inherits Window {
                 title: "About";
                 Card {
                     Text { text: "RustWeather " + root.version; color: Theme.text; font-weight: 700; }
-                    Text { text: "Weather data: DWD through Bright Sky, Open-Meteo, RainViewer. Maps: OpenStreetMap contributors, Esri, EOX, OpenTopoMap, BKG, CARTO, Natural Earth. Icons: Tabler (MIT)."; color: Theme.text-muted; wrap: word-wrap; }
+                    Text { text: "Weather data: DWD through Bright Sky, Open-Meteo, RainViewer. Maps: OpenStreetMap contributors, Esri, EOX, OpenTopoMap, BKG, CARTO, Natural Earth. Cities: GeoNames. Icons: Tabler (MIT)."; color: Theme.text-muted; wrap: word-wrap; }
                 }
             }
             if root.toast != "": Toast { x: parent.width - self.width - 12px; y: 12px; text: root.toast; level: root.toast-level; }

@@ -13,6 +13,7 @@ use rustweather_core::paths::Paths;
 use rustweather_core::radar::engine::{self, Command, Config, Handle, Setup};
 use rustweather_core::secrets::{self, Secrets};
 use rustweather_core::settings::Settings;
+use rustweather_core::sources::warnings::Outline;
 use rustweather_core::ui_state::UiState;
 use rustweather_core::{APP_ID, legacy, store};
 use slint::winit_030::winit::window::WindowAttributes;
@@ -69,6 +70,12 @@ pub struct App {
     pub radar_shown: Cell<(bool, bool, bool)>,
     pub layer_extents: RefCell<[Option<rustweather_core::map::Extent>; 3]>,
     pub heat_extent: Cell<Option<rustweather_core::map::Extent>>,
+    pub warning_outline: RefCell<Option<Outline>>,
+    pub hover_outline: RefCell<Option<Outline>>,
+    /// Only the newest question about the area under the pointer counts.
+    pub hover_turn: Cell<u64>,
+    /// Longitude and latitude of the note on the map.
+    pub probe_at: Cell<Option<(f64, f64)>>,
     /// The screen is locked; a fullscreen window has the focus.
     pub outside: Cell<(bool, bool)>,
     quiet: Cell<bool>,
@@ -566,6 +573,10 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         radar_shown: Cell::new((false, false, false)),
         layer_extents: RefCell::new([None; 3]),
         heat_extent: Cell::new(None),
+        warning_outline: RefCell::new(None),
+        hover_outline: RefCell::new(None),
+        hover_turn: Cell::new(0),
+        probe_at: Cell::new(None),
         outside: Cell::new((false, false)),
         quiet: Cell::new(false),
         screen_timer: slint::Timer::default(),

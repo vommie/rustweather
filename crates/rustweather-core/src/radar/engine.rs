@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Utc};
 use rayon::prelude::*;
 
+use super::cities;
 use super::clouds;
 use super::dwd::{self, Lut, Projector};
 use super::layers::{self, KINDS, Kind};
@@ -116,8 +117,8 @@ pub enum Event {
     Rain(Picture),
     Labels(Option<Picture>),
     Wind(Option<Picture>),
-    /// Pixel position and temperature of each label.
-    Temps(Vec<(f32, f32, f32)>),
+    /// City, pixel position and temperature of each label.
+    Temps(Vec<(&'static str, f32, f32, f32)>),
     /// The temperature colors and the stretch of the map they show; `None` takes them away.
     Heat(Option<(Picture, Extent)>),
     /// A picture for the map picker; `index` is the place in `Basemap::ALL`.
@@ -166,6 +167,7 @@ pub enum Command {
     },
     CloudsTime(Result<DateTime<Utc>>),
     TempsLoaded(Result<Vec<(temps::Cell, f32)>>),
+    CityTempsLoaded(Result<Vec<(temps::CityId, f32)>>),
     KeyChecked(bool),
     WindLoaded {
         result: Result<WindField>,
@@ -521,15 +523,21 @@ impl Worker {
                 match result {
                     Ok(found) => {
                         self.temps.insert(found);
+                        self.heat_drawn = None;
+                    }
+                    Err(e) => self.temps_failed(&e),
+                }
+            }
+            Command::CityTempsLoaded(result) => {
+                self.temps_busy = false;
+                match result {
+                    Ok(found) => {
+                        self.temps.insert_cities(found);
                         if self.config.temps_layer {
                             self.emit(Event::Temps(self.temps.labels(&self.view)));
                         }
-                        self.heat_drawn = None;
                     }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "[Radar] No temperatures");
-                        self.temps_retry = Some(Instant::now() + LAYER_RETRY);
-                    }
+                    Err(e) => self.temps_failed(&e),
                 }
             }
             Command::CloudsTime(result) => match result {
@@ -936,6 +944,11 @@ impl Worker {
         }
     }
 
+    fn temps_failed(&mut self, error: &Error) {
+        tracing::warn!(%error, "[Radar] Temperatures failed");
+        self.temps_retry = Some(Instant::now() + LAYER_RETRY);
+    }
+
     fn fetch_temps(&mut self) {
         let wanted = self.config.temps_layer || self.config.heat_layer;
         if !wanted || self.temps_busy || self.moved_at.is_some_and(|t| t.elapsed() < SETTLE) {
@@ -945,17 +958,25 @@ impl Worker {
         if self.temps_retry.is_some_and(|t| t > Instant::now()) {
             return;
         }
-        let cells = if self.config.heat_layer {
-            temps::around(&self.view)
-        } else {
-            temps::visible(&self.view)
-        };
-        let missing = self.temps.missing(&cells);
+        let (http, tx) = (self.http.clone(), self.tx.clone());
+        if self.config.temps_layer {
+            let cities = self.temps.missing_cities(&cities::visible(&self.view));
+            if !cities.is_empty() {
+                self.temps_busy = true;
+                self.runtime.spawn(async move {
+                    let _ = tx.send(Command::CityTempsLoaded(temps::fetch_cities(&http, &cities).await));
+                });
+                return;
+            }
+        }
+        if !self.config.heat_layer {
+            return;
+        }
+        let missing = self.temps.missing(&temps::around(&self.view));
         if missing.is_empty() {
             return;
         }
         self.temps_busy = true;
-        let (http, tx) = (self.http.clone(), self.tx.clone());
         self.runtime.spawn(async move {
             let _ = tx.send(Command::TempsLoaded(temps::fetch(&http, &missing).await));
         });
@@ -1178,7 +1199,9 @@ impl Worker {
         if self.config.temps_layer {
             self.emit(Event::Temps(self.temps.labels(&view)));
         }
-        self.emit(Event::Cities(if own { labels::visible(&view) } else { Vec::new() }));
+        // The temperature labels carry the names of the cities themselves.
+        let names = own && !self.config.temps_layer;
+        self.emit(Event::Cities(if names { labels::visible(&view) } else { Vec::new() }));
         let labels_picture = labels_layer.map(|layer| {
             let mut rgba = vec![0u8; (view.width * view.height * 4) as usize];
             for (z, x, y) in tiles::compose(&view, &layer, &self.store, &mut rgba, 1.0) {
