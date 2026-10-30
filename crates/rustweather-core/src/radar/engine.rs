@@ -9,14 +9,13 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Utc};
 use rayon::prelude::*;
 
-use super::cities;
 use super::clouds;
 use super::dwd::{self, Lut, Projector};
 use super::layers::{self, KINDS, Kind};
 use super::motion::{self, Field};
 use super::palette::{self, Ramp};
 use super::rainviewer;
-use super::temps;
+use super::temps::{self, Grid};
 use super::thumbs::Thumbs;
 use super::wind::{self, Field as WindField, Flow};
 use super::{FrameInfo, FrameState};
@@ -39,8 +38,6 @@ const LAYER_RETRY: Duration = Duration::from_secs(60);
 const KEEP_WARM: Duration = Duration::from_secs(120);
 /// A view counts as settled after this, so a drag does not ask for every picture on its way.
 const SETTLE: Duration = Duration::from_millis(400);
-/// The share of a new heatmap that must be known before it replaces the one on screen.
-const HEAT_COVERAGE: f32 = 0.7;
 const WIND_FRAME: Duration = Duration::from_millis(33);
 const WIND_DELAY: Duration = Duration::from_millis(600);
 const WIND_MAX_AGE: Duration = Duration::from_secs(15 * 60);
@@ -101,6 +98,10 @@ pub enum Notice {
     /// The chosen map works: whatever was said about its key is over.
     MapReady,
     Fallback {
+        text: String,
+    },
+    /// Something on the map is missing, and the user should know why.
+    Failed {
         text: String,
     },
 }
@@ -166,8 +167,7 @@ pub enum Command {
         kind: Kind,
     },
     CloudsTime(Result<DateTime<Utc>>),
-    TempsLoaded(Result<Vec<(temps::Cell, f32)>>),
-    CityTempsLoaded(Result<Vec<(temps::CityId, f32)>>),
+    TempsLoaded(Result<Grid>),
     KeyChecked(bool),
     WindLoaded {
         result: Result<WindField>,
@@ -231,11 +231,11 @@ pub fn start(setup: Setup, events: impl Fn(Event) + Send + 'static) -> Result<Ha
         clouds_time: remembered_clouds_time(&setup.cache_dir.join("clouds-time")),
         clouds_file: setup.cache_dir.join("clouds-time"),
         clouds_asked: None,
-        temps: temps::Store::default(),
+        temp_grid: None,
+        temp_file: setup.cache_dir.join("temperature-grid.bin"),
         temps_busy: false,
         temps_retry: None,
-        heat_drawn: None,
-        heat_shown: false,
+        heat_shown: None,
         thumbs: None,
         moved_at: None,
         rv_due: None,
@@ -294,12 +294,12 @@ struct Worker {
     clouds_time: Option<(DateTime<Utc>, Instant)>,
     clouds_file: PathBuf,
     clouds_asked: Option<Instant>,
-    temps: temps::Store,
+    temp_grid: Option<Grid>,
+    temp_file: PathBuf,
     temps_busy: bool,
     temps_retry: Option<Instant>,
-    /// The view the heatmap was last drawn for.
-    heat_drawn: Option<View>,
-    heat_shown: bool,
+    /// The stretch of the map and the zoom of the heatmap on screen.
+    heat_shown: Option<(Extent, f64)>,
     thumbs: Option<Thumbs>,
     moved_at: Option<Instant>,
     rv_due: Option<Instant>,
@@ -456,9 +456,8 @@ impl Worker {
                 if !self.config.temps_layer {
                     self.emit(Event::Temps(Vec::new()));
                 }
-                self.heat_drawn = None;
                 if !self.config.heat_layer {
-                    self.heat_shown = false;
+                    self.heat_shown = None;
                     self.emit(Event::Heat(None));
                 }
                 if !self.config.wind_layer {
@@ -496,6 +495,7 @@ impl Worker {
                 self.store.forget_failures();
                 self.layer_failed = false;
                 self.retry_at = None;
+                self.temps_retry = None;
                 self.fetch();
                 self.base_dirty = true;
             }
@@ -521,23 +521,18 @@ impl Worker {
             Command::TempsLoaded(result) => {
                 self.temps_busy = false;
                 match result {
-                    Ok(found) => {
-                        self.temps.insert(found);
-                        self.heat_drawn = None;
+                    Ok(grid) => {
+                        self.temp_grid = Some(grid);
+                        self.heat_shown = None;
+                        self.show_temps();
                     }
-                    Err(e) => self.temps_failed(&e),
-                }
-            }
-            Command::CityTempsLoaded(result) => {
-                self.temps_busy = false;
-                match result {
-                    Ok(found) => {
-                        self.temps.insert_cities(found);
-                        if self.config.temps_layer {
-                            self.emit(Event::Temps(self.temps.labels(&self.view)));
-                        }
+                    Err(error) => {
+                        tracing::warn!(%error, "[Radar] Temperatures failed");
+                        self.temps_retry = Some(Instant::now() + LAYER_RETRY);
+                        self.emit(Event::Notice(Notice::Failed {
+                            text: format!("Temperatures could not be loaded: {error}"),
+                        }));
                     }
-                    Err(e) => self.temps_failed(&e),
                 }
             }
             Command::CloudsTime(result) => match result {
@@ -928,6 +923,7 @@ impl Worker {
             self.flow = None;
             self.wind = None;
             self.wind_at = None;
+            self.temp_grid = None;
         }
     }
 
@@ -944,41 +940,29 @@ impl Worker {
         }
     }
 
-    fn temps_failed(&mut self, error: &Error) {
-        tracing::warn!(%error, "[Radar] Temperatures failed");
-        self.temps_retry = Some(Instant::now() + LAYER_RETRY);
+    fn show_temps(&self) {
+        if self.config.temps_layer
+            && let Some(grid) = &self.temp_grid
+        {
+            self.emit(Event::Temps(grid.labels(&self.view)));
+        }
     }
 
+    /// One grid an hour serves every city and the heatmap, wherever the map goes.
     fn fetch_temps(&mut self) {
-        let wanted = self.config.temps_layer || self.config.heat_layer;
-        if !wanted || self.temps_busy || self.moved_at.is_some_and(|t| t.elapsed() < SETTLE) {
+        if !self.config.temps_layer && !self.config.heat_layer {
             return;
         }
         self.draw_heat();
-        if self.temps_retry.is_some_and(|t| t > Instant::now()) {
-            return;
-        }
-        let (http, tx) = (self.http.clone(), self.tx.clone());
-        if self.config.temps_layer {
-            let cities = self.temps.missing_cities(&cities::visible(&self.view));
-            if !cities.is_empty() {
-                self.temps_busy = true;
-                self.runtime.spawn(async move {
-                    let _ = tx.send(Command::CityTempsLoaded(temps::fetch_cities(&http, &cities).await));
-                });
-                return;
-            }
-        }
-        if !self.config.heat_layer {
-            return;
-        }
-        let missing = self.temps.missing(&temps::around(&self.view));
-        if missing.is_empty() {
+        let hour = temps::hour(Utc::now());
+        let current = self.temp_grid.as_ref().is_some_and(|g| g.hour == hour);
+        if current || self.temps_busy || self.temps_retry.is_some_and(|t| t > Instant::now()) {
             return;
         }
         self.temps_busy = true;
+        let (http, tx, file) = (self.http.clone(), self.tx.clone(), self.temp_file.clone());
         self.runtime.spawn(async move {
-            let _ = tx.send(Command::TempsLoaded(temps::fetch(&http, &missing).await));
+            let _ = tx.send(Command::TempsLoaded(temps::load(&http, &file, hour).await));
         });
     }
 
@@ -998,19 +982,19 @@ impl Worker {
         }
     }
 
-    /// After a zoom the cells are new: the old picture stays on its place on the map until most of the new one is known.
     fn draw_heat(&mut self) {
-        if !self.config.heat_layer || self.heat_drawn == Some(self.view) {
+        if !self.config.heat_layer
+            || self
+                .heat_shown
+                .is_some_and(|(extent, zoom)| layers::covers(&extent, zoom, &self.view))
+        {
             return;
         }
-        self.heat_drawn = Some(self.view);
-        let Some(heat) = self.temps.heat(&self.view) else {
+        let Some(grid) = &self.temp_grid else {
             return;
         };
-        if self.heat_shown && heat.coverage < HEAT_COVERAGE {
-            return;
-        }
-        self.heat_shown = true;
+        let heat = grid.heat(&self.view);
+        self.heat_shown = Some((heat.extent, self.view.zoom));
         self.emit(Event::Heat(Some((
             Picture {
                 width: heat.width,
@@ -1196,9 +1180,7 @@ impl Worker {
             },
             view,
         ));
-        if self.config.temps_layer {
-            self.emit(Event::Temps(self.temps.labels(&view)));
-        }
+        self.show_temps();
         // The temperature labels carry the names of the cities themselves.
         let names = own && !self.config.temps_layer;
         self.emit(Event::Cities(if names { labels::visible(&view) } else { Vec::new() }));

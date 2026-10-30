@@ -81,6 +81,7 @@ export component MainWindow inherits Window {
     in property <[AlertData]> alerts;
     in property <string> status;
     in property <int> status-level;
+    in property <string> net-problem;
     in property <string> toast;
     in property <int> toast-level;
     in property <bool> full;
@@ -146,6 +147,7 @@ export component MainWindow inherits Window {
 
     callback page-changed(int);
     callback open-settings();
+    callback open-network();
     callback resized(length, length);
     callback pan(length, length);
     callback zoom(float, length, length);
@@ -288,7 +290,12 @@ export component MainWindow inherits Window {
                 if root.page == 3: AlertsPage { alerts: root.alerts; }
                 if root.toast != "": Toast { x: parent.width - self.width - 12px; y: 42px; text: root.toast; level: root.toast-level; }
             }
-            if !root.full: StatusLine { text: root.status; level: root.status-level; }
+            if !root.full: StatusLine {
+                text: root.status;
+                level: root.status-level;
+                problem: root.net-problem;
+                open-problem => { root.open-network(); }
+            }
         }
     }
     TipLayer { width: root.width; height: root.height; }

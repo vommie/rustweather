@@ -4,8 +4,10 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use super::temps::CityId;
 use crate::map::{View, to_unit};
+
+/// A city's number in the list.
+pub type CityId = u32;
 
 /// Biggest city first: name, longitude, latitude.
 const DATA: &str = include_str!("../../../../assets/map/cities.tsv");
