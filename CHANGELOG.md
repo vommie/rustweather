@@ -13,7 +13,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
   service's limit, errors, data and average time. API keys never show.
 - In the background the app only fetches the temperature for the tray. Forecast, warnings and the rain outlook wait until a window, the
   weather card or the radar is open, and are fetched then. Behind a locked screen, a screen saver or a fullscreen program nothing is
-  fetched at all. Notifications about rain and warnings therefore only come while the app is in use.
+  fetched at all. Notifications about rain and warnings therefore only come while the app is in use. A new setting on the Alerts page,
+  off by default, also checks the official warnings in the background, with one more request per update.
 - A temperature heatmap colors the whole map, with its scale in the legend. It shares its values with the temperature labels.
 - A click on a warning area opens the full warning in a floating panel on the right, in the DWD's German wording.
 - Temperature layer on the radar: labels across the map, more of them the closer you zoom in.

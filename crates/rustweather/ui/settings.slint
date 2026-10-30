@@ -14,7 +14,7 @@ export struct SettingsData {
     source: int, palette: int, opacity: float, speed: float, smooth: bool, autoplay: bool, looping: bool, labels: bool,
     has-carto: bool,
     cache-limit: int, radar-hours: int, cache-text: string, cache-share: float,
-    al-paused: bool, al-rain: bool, al-end: bool, al-dwd: bool, al-storm: bool, al-frost: bool, al-heat: bool,
+    al-paused: bool, al-rain: bool, al-end: bool, al-dwd: bool, al-background: bool, al-storm: bool, al-frost: bool, al-heat: bool,
     al-level: int, al-lead: float, al-night: bool, al-from: int, al-to: int, al-severe: bool, al-full: bool,
     temp-unit: int, wind-unit: int,
 }
@@ -274,6 +274,7 @@ export component SettingsWindow inherits Window {
                     Sw { label: "Rain is coming"; key: "al-rain"; on: root.data.al-rain; changed-to(k, v) => { root.set-bool(k, v); } }
                     Sw { label: "Rain is ending"; key: "al-end"; on: root.data.al-end; changed-to(k, v) => { root.set-bool(k, v); } }
                     Sw { label: "Official DWD warnings"; key: "al-dwd"; on: root.data.al-dwd; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Check warnings in the background"; detail: "Without an open window the app only fetches the temperature. This adds one request per update, so warnings reach you there too. Never while the screen is locked or a program runs in fullscreen."; key: "al-background"; on: root.data.al-background; changed-to(k, v) => { root.set-bool(k, v); } }
                     Sw { label: "Thunderstorms nearby"; key: "al-storm"; on: root.data.al-storm; changed-to(k, v) => { root.set-bool(k, v); } }
                     Sw { label: "Frost tonight"; key: "al-frost"; on: root.data.al-frost; changed-to(k, v) => { root.set-bool(k, v); } }
                     Sw { label: "Heat"; key: "al-heat"; on: root.data.al-heat; changed-to(k, v) => { root.set-bool(k, v); } }
