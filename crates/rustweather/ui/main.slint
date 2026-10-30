@@ -134,6 +134,14 @@ export component MainWindow inherits Window {
     in property <string> map-credit;
     in property <[TempLabel]> temps;
     in property <[AlertData]> warning-panel;
+    in property <string> warning-path;
+    in property <LayerRect> warning-rect;
+    in property <float> warning-path-width;
+    in property <float> warning-path-height;
+    in property <string> hover-path;
+    in property <LayerRect> hover-rect;
+    in property <float> hover-path-width;
+    in property <float> hover-path-height;
     in property <string> warning-area;
 
     callback page-changed(int);
@@ -156,6 +164,7 @@ export component MainWindow inherits Window {
     callback mini();
     callback banner-act();
     callback warnings-close();
+    callback hover(length, length);
     callback pick-map(int);
     callback map-picker(bool);
 
@@ -244,6 +253,14 @@ export component MainWindow inherits Window {
                     map-credit: root.map-credit;
                     temps: root.temps;
                     warning-panel: root.warning-panel;
+                    warning-path: root.warning-path;
+                    warning-rect: root.warning-rect;
+                    warning-path-width: root.warning-path-width;
+                    warning-path-height: root.warning-path-height;
+                    hover-path: root.hover-path;
+                    hover-rect: root.hover-rect;
+                    hover-path-width: root.hover-path-width;
+                    hover-path-height: root.hover-path-height;
                     warning-area: root.warning-area;
                     full: root.full;
                     resized(w, h) => { root.resized(w, h); }
@@ -264,6 +281,7 @@ export component MainWindow inherits Window {
                     mini => { root.mini(); }
                     banner-act => { root.banner-act(); }
                     warnings-close => { root.warnings-close(); }
+                    hover(x, y) => { root.hover(x, y); }
                     pick-map(i) => { root.pick-map(i); }
                     map-picker(open) => { root.map-picker(open); }
                 }

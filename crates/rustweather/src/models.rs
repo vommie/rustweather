@@ -396,7 +396,7 @@ pub fn alert_rows(alerts: &[model::Alert]) -> Vec<AlertData> {
 }
 
 /// A temperature label's text and color.
-pub fn temp_label(x: f32, y: f32, celsius: f32, unit: TempUnit, scale: f32) -> crate::TempLabel {
+pub fn temp_label(name: &str, x: f32, y: f32, celsius: f32, unit: TempUnit, scale: f32) -> crate::TempLabel {
     let text = match unit {
         TempUnit::Celsius => format!("{celsius:.0}°"),
         TempUnit::Fahrenheit => format!("{:.0}°", celsius * 9.0 / 5.0 + 32.0),
@@ -405,6 +405,7 @@ pub fn temp_label(x: f32, y: f32, celsius: f32, unit: TempUnit, scale: f32) -> c
         x: x / scale,
         y: y / scale,
         text: s(text),
+        name: s(name),
         color: slint_color(color::tile(celsius)),
     }
 }

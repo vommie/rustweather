@@ -9,12 +9,11 @@ use rustweather_core::radar::engine::{Command, Event, Notice, Picture};
 use rustweather_core::radar::layers::Kind;
 use rustweather_core::secrets;
 use rustweather_core::settings::Basemap;
-use rustweather_core::sources::warnings;
 use rustweather_core::ui_state::SavedView;
 use slint::winit_030::WinitWindowAccessor as _;
 use slint::{ComponentHandle as _, Image, ModelRc, Rgba8Pixel, SharedPixelBuffer, VecModel};
 
-use crate::app::{App, with_app};
+use crate::app::App;
 use crate::models;
 use crate::{CityLabel, FrameCell, LayerRect, MapChoice, ViewChip};
 
@@ -37,7 +36,7 @@ fn cell(state: FrameState, forecast: bool) -> FrameCell {
 }
 
 /// Puts the picture layers on their places on the map: the graphics card moves and scales them, so they follow every frame.
-fn place_layers(app: &App) {
+pub fn place_layers(app: &App) {
     let view = app.shown_view.get();
     let scale = app.main.window().scale_factor();
     let rect = |extent: Option<Extent>| {
@@ -56,6 +55,10 @@ fn place_layers(app: &App) {
     app.main.set_warnings_rect(rect(extents[Kind::Warnings.index()]));
     app.main.set_lightning_rect(rect(extents[Kind::Lightning.index()]));
     app.main.set_heat_rect(rect(app.heat_extent.get()));
+    app.main
+        .set_warning_rect(rect(app.warning_outline.borrow().as_ref().map(|o| o.extent)));
+    app.main
+        .set_hover_rect(rect(app.hover_outline.borrow().as_ref().map(|o| o.extent)));
 }
 
 pub fn on_event(app: &App, event: Event) {
@@ -98,7 +101,7 @@ pub fn on_event(app: &App, event: Event) {
             let unit = app.settings.borrow().units.temperature;
             let labels: Vec<_> = list
                 .into_iter()
-                .map(|(x, y, t)| models::temp_label(x, y, t, unit, scale))
+                .map(|(name, x, y, t)| models::temp_label(name, x, y, t, unit, scale))
                 .collect();
             w.set_temps(ModelRc::new(VecModel::from(labels)));
         }
@@ -280,28 +283,6 @@ pub fn stop(app: &App) {
 }
 
 /// A click on the map: the full warnings for that point, in the panel on the right. Where none applies, the panel closes.
-fn show_warnings_at(app: &App, lat: f64, lon: f64) {
-    if !app.ui.borrow().layer_alerts {
-        return;
-    }
-    let http = app.http.clone();
-    app.runtime.spawn(async move {
-        let result = warnings::at(&http, lon, lat).await;
-        with_app(move |app| match result {
-            Ok((alerts, _)) if alerts.is_empty() => {
-                app.main.set_warning_area("".into());
-                app.main.set_warning_panel(ModelRc::default());
-            }
-            Ok((alerts, area)) => {
-                app.main.set_warning_area(area.into());
-                app.main
-                    .set_warning_panel(ModelRc::new(VecModel::from(models::alert_rows(&alerts))));
-            }
-            Err(e) => tracing::warn!(error = %e, "[Radar] Warnings for the clicked place failed"),
-        });
-    });
-}
-
 /// The next frame that is complete: playing must not stop at pictures still on their way.
 fn next_ready(app: &App, position: f32) -> f32 {
     use slint::Model as _;
@@ -356,6 +337,12 @@ fn apply_view(app: &App, view: View) {
     app.view.set(view);
     app.radar.send(Command::View(view));
     let scale = f64::from(app.main.window().scale_factor());
+    // The little note about a place stays on that place, also when that takes it off the map.
+    if let Some((lon, lat)) = app.probe_at.get() {
+        let (x, y) = view.pixel_of(lon, lat);
+        app.main.set_probe_x((x / scale) as f32);
+        app.main.set_probe_y((y / scale) as f32);
+    }
     let (x, y) = view.pixel_of(app.settings.borrow().place().lon, app.settings.borrow().place().lat);
     app.main.set_home_x((x / scale) as f32);
     app.main.set_home_y((y / scale) as f32);
@@ -534,14 +521,20 @@ pub fn wire(app: &std::rc::Rc<App>) {
         let (lon, lat) = app.view.get().lonlat_of(f64::from(x * scale), f64::from(y * scale));
         app.main.set_probe_x(x);
         app.main.set_probe_y(y);
+        app.probe_at.set(Some((lon, lat)));
         app.radar.send(Command::Probe { lon, lat });
-        show_warnings_at(&app, lat, lon);
+        crate::warning_ui::show_at(&app, lat, lon);
     });
     on!(on_warnings_close, |app| {
-        app.main.set_warning_area("".into());
-        app.main.set_warning_panel(ModelRc::default());
+        crate::warning_ui::close(&app);
+    });
+    on!(on_hover, |app, x, y| {
+        let scale = app.main.window().scale_factor();
+        let (lon, lat) = app.view.get().lonlat_of(f64::from(x * scale), f64::from(y * scale));
+        crate::warning_ui::hover_at(&app, lat, lon);
     });
     on!(on_probe_close, |app| {
+        app.probe_at.set(None);
         app.main.set_probe_title("".into());
     });
     on!(on_seek, |app, position| {

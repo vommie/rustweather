@@ -5,10 +5,16 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Temperature labels now belong to cities, with their name: big cities first, smaller ones appear as you zoom in.
+- The district whose warning is open is outlined on the map, and districts with a warning light up under the pointer.
+
 ### Changed
 
 - Every setting now explains itself in a short tooltip, shown over the whole row, instead of text under its name.
 - The map that ships with the app is now called Standard map.
+- The note about a clicked place stays on that place while the map moves, and closes with a right-click.
 - The layer buttons on the radar show only their icon, with the explanation in the tooltip.
 
 ### Fixed
