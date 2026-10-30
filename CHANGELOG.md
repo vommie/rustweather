@@ -11,6 +11,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
   TopPlus, light and dark gray, OpenStreetMap, the own map and CARTO. It replaces the setting. Every map but CARTO works without a key; CARTO stays grayed out until there is one, and its tooltip says why.
 - A Network page in the settings shows every request live, with statistics per server: running now, last minute, today against the
   service's limit, errors, data and average time. API keys never show.
+- In the background the app only fetches the temperature for the tray. Forecast, warnings and the rain outlook wait until a window, the
+  weather card or the radar is open, and are fetched then. Behind a locked screen, a screen saver or a fullscreen program nothing is
+  fetched at all. Notifications about rain and warnings therefore only come while the app is in use.
 - A temperature heatmap colors the whole map, with its scale in the legend. It shares its values with the temperature labels.
 - A click on a warning area opens the full warning in a floating panel on the right, in the DWD's German wording.
 - Temperature layer on the radar: labels across the map, more of them the closer you zoom in.

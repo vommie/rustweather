@@ -482,7 +482,13 @@ impl Worker {
                     }
                 }
             }
-            Command::Away(away) => self.away = away,
+            Command::Away(away) => {
+                if self.away && !away {
+                    self.base_dirty = true;
+                    self.rain_dirty = true;
+                }
+                self.away = away;
+            }
             Command::Reload => {
                 self.store.forget_failures();
                 self.layer_failed = false;
@@ -701,7 +707,7 @@ impl Worker {
                 };
                 for (x, y) in tiles::visible(&view, &layer, z) {
                     if self.store.cached(&layer, z, x, y).is_none() {
-                        self.request(&layer, z, x, y, true);
+                        self.fetch_tile(&layer, z, x, y, true);
                     }
                 }
             }
@@ -713,7 +719,7 @@ impl Worker {
         let Some(key) = self.config.carto_key.clone() else {
             return;
         };
-        if !self.active || self.key_checked.as_deref() == Some(key.as_str()) {
+        if !self.active || self.away || self.key_checked.as_deref() == Some(key.as_str()) {
             return;
         }
         self.key_checked = Some(key.clone());
@@ -1024,7 +1030,7 @@ impl Worker {
     }
 
     fn fetch(&mut self) {
-        if !self.active || self.fetching.is_some_and(|t| t.elapsed() < Duration::from_secs(30)) {
+        if !self.active || self.away || self.fetching.is_some_and(|t| t.elapsed() < Duration::from_secs(30)) {
             return;
         }
         self.fetching = Some(Instant::now());
@@ -1105,7 +1111,14 @@ impl Worker {
         }
     }
 
+    /// Only for what is on screen. Pictures still get drawn from the cache in the background, they just fetch nothing.
     fn request(&self, layer: &Layer, z: i32, x: i64, y: i64, base: bool) {
+        if self.active && !self.away {
+            self.fetch_tile(layer, z, x, y, base);
+        }
+    }
+
+    fn fetch_tile(&self, layer: &Layer, z: i32, x: i64, y: i64, base: bool) {
         let tx = self.tx.clone();
         self.store.request(&self.runtime, layer, z, x, y, move |result| {
             let _ = tx.send(Command::TileDone { base, result });

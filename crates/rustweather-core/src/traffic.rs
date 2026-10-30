@@ -165,6 +165,7 @@ impl Traffic {
             millis,
             bytes,
         };
+        tracing::debug!(host = %entry.host, what = %entry.what, outcome = %entry.outcome, millis, "[Http] Request");
         let save = {
             let mut inner = self.inner.lock();
             inner.roll_day();
