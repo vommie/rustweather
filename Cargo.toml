@@ -1,0 +1,66 @@
+[workspace]
+resolver = "3"
+members = ["crates/rustweather-core", "crates/rustweather"]
+default-members = ["crates/rustweather-core", "crates/rustweather"]
+
+[workspace.package]
+# Single source of truth for the app version.
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "MIT"
+authors = ["vommie"]
+repository = "https://github.com/vommie/rustweather"
+readme = "README.md"
+publish = false
+
+[workspace.dependencies]
+rustweather-core = { path = "crates/rustweather-core" }
+slint = { version = "1.18", features = ["unstable-winit-030"] }
+slint-build = "1.18"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-appender = "0.2"
+atomic-write-file = "0.3"
+directories = "6"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
+# HTTP/2 connection reuse and parallel tile fetches; rustls so no system OpenSSL is needed.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2", "gzip", "json"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
+base64 = "0.22"
+flate2 = "1"
+# The DWD radar grid is a polar stereographic projection.
+proj4rs = "0.3"
+# Only for the optional wetterdienst.de fallback.
+scraper = "0.24"
+resvg = "0.48"
+image = { version = "0.25", default-features = false, features = ["png"] }
+quick_cache = "0.7"
+rayon = "1"
+parking_lot = "0.12"
+regex = "1"
+ksni = { version = "0.3", default-features = false, features = ["async-io", "blocking"] }
+zbus = { version = "5", default-features = false, features = ["blocking-api", "async-io"] }
+notify-rust = "4"
+interprocess = "2"
+opener = "0.8"
+x11rb = "0.13"
+
+[workspace.lints.rust]
+# "deny", not "forbid": the code Slint generates allows it for itself.
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+strip = true

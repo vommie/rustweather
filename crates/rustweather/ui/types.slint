@@ -1,0 +1,39 @@
+// The data the UI shows. Rust fills these (src/models.rs); nothing here is computed from weather values.
+
+export struct NowData {
+    has-data: bool,
+    place: string,
+    temperature: string,
+    condition: string,
+    feels: string,
+    range: string,
+    wind: string,
+    gust: string,
+    humidity: string,
+    dew: string,
+    pressure: string,
+    visibility: string,
+    precipitation: string,
+    clouds: string,
+    uv: string,
+    air: string,
+    air-detail: string,
+    pollen: string,
+    sunrise: string,
+    sunset: string,
+    moon: string,
+    station: string,
+    measured: string,
+    rain-line: string,
+    tile: color,
+    history-path: string,
+    history-range: string,
+}
+
+export struct HourData { label: string, temperature: string, rain: float, probability: string, height: float }
+export struct DayData { label: string, condition: string, low: string, high: string, rain: string, start: float, end: float, color: color }
+export struct AlertData { title: string, text: string, time: string, level: int }
+export struct FrameCell { state: int, forecast: bool }
+export struct CityLabel { name: string, x: length, y: length }
+export struct RainBar { height: float, past: bool }
+export struct ViewChip { name: string, active: bool }

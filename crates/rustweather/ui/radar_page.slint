@@ -1,0 +1,332 @@
+// The radar: map layers from Rust, gestures, timeline, playback. Everything on the map floats on it.
+
+import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
+import { Chip, IconButton, Slider, ThinBar, Banner, Icon } from "controls.slint";
+import { CityLabel, FrameCell, RainBar, ViewChip } from "types.slint";
+
+export component Timeline inherits Rectangle {
+    in property <[FrameCell]> frames;
+    in property <int> live;
+    in property <float> position;
+    callback seek(float);
+    height: 22px;
+    property <length> cell: root.frames.length > 0 ? root.width / root.frames.length : root.width;
+    HorizontalLayout {
+        y: 7px;
+        height: 8px;
+        spacing: 1px;
+        for f in root.frames: Rectangle {
+            border-radius: 1px;
+            background: f.state == 2 ? (f.forecast ? Theme.forecast : Theme.primary)
+                : f.state == 1 ? Theme.accent : f.state == 3 ? Theme.error : Theme.surface-hover;
+        }
+    }
+    if root.frames.length > 0: Rectangle {
+        x: (root.live + 0.5) * root.cell - 1px;
+        y: 3px;
+        width: 2px;
+        height: 16px;
+        background: Theme.text;
+    }
+    if root.frames.length > 0: Rectangle {
+        x: (root.position + 0.5) * root.cell - 4px;
+        y: 1px;
+        width: 8px;
+        height: 20px;
+        border-radius: 3px;
+        background: Theme.accent;
+        border-width: 1px;
+        border-color: Theme.background;
+    }
+    TouchArea {
+        mouse-cursor: pointer;
+        function go(px: length) {
+            root.seek(clamp(px / root.cell - 0.5, 0, root.frames.length - 1));
+        }
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down { self.go(self.mouse-x); }
+        }
+        moved => { if self.pressed { self.go(self.mouse-x); } }
+    }
+}
+
+export component RadarPage inherits Rectangle {
+    in property <image> base;
+    in property <image> overlay;
+    in property <image> rain;
+    in property <image> labels;
+    in property <[CityLabel]> cities;
+    in property <[FrameCell]> frames;
+    in property <int> live;
+    in property <float> position;
+    in property <bool> playing;
+    in property <bool> looping;
+    in property <string> time-label;
+    in property <string> source-label;
+    in property <float> loading;
+    in property <string> banner;
+    in property <bool> banner-error;
+    in property <string> banner-action;
+    in property <string> eta-title;
+    in property <string> eta-text;
+    in property <[RainBar]> bars;
+    in property <string> probe-title;
+    in property <string> probe-text;
+    in property <length> probe-x;
+    in property <length> probe-y;
+    in property <length> home-x;
+    in property <length> home-y;
+    in property <string> scale-label;
+    in property <length> scale-width;
+    in property <[ViewChip]> views;
+    in property <bool> layer-alerts;
+    in property <bool> layer-clouds;
+    in property <bool> layer-lightning;
+    in property <bool> full;
+    callback resized(length, length);
+    callback pan(length, length);
+    callback zoom(float, length, length);
+    callback probe(length, length);
+    callback probe-close();
+    callback seek(float);
+    callback toggle-play();
+    callback toggle-loop();
+    callback step(int);
+    callback to-live();
+    callback reload();
+    callback pick-view(int);
+    callback add-view();
+    callback toggle-layer(int);
+    callback toggle-full();
+    callback mini();
+    callback banner-act();
+    background: Theme.map-back;
+    clip: true;
+    forward-focus: keys;
+    changed width => { root.resized(self.width, self.height); }
+    changed height => { root.resized(self.width, self.height); }
+    init => { root.resized(self.width, self.height); }
+
+    Image { width: 100%; height: 100%; source: root.base; image-fit: fill; }
+    Image { width: 100%; height: 100%; source: root.overlay; image-fit: fill; opacity: 0.65; }
+    Image { width: 100%; height: 100%; source: root.rain; image-fit: fill; }
+    Image { width: 100%; height: 100%; source: root.labels; image-fit: fill; }
+    for c in root.cities: Text {
+        x: c.x + 6px;
+        y: c.y - 8px;
+        text: c.name;
+        color: Theme.text;
+        font-size: 11px;
+    }
+    Rectangle {
+        x: root.home-x - 6px;
+        y: root.home-y - 6px;
+        width: 12px;
+        height: 12px;
+        border-radius: 6px;
+        background: Theme.accent;
+        border-width: 2px;
+        border-color: Theme.background;
+    }
+
+    property <length> last-x;
+    property <length> last-y;
+    property <bool> dragged;
+    touch := TouchArea {
+        mouse-cursor: self.pressed ? MouseCursor.grabbing : MouseCursor.grab;
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down {
+                keys.focus();
+                root.last-x = self.mouse-x;
+                root.last-y = self.mouse-y;
+                root.dragged = false;
+            }
+        }
+        moved => {
+            if self.pressed {
+                root.pan(self.mouse-x - root.last-x, self.mouse-y - root.last-y);
+                root.last-x = self.mouse-x;
+                root.last-y = self.mouse-y;
+                root.dragged = true;
+            }
+        }
+        clicked => { if !root.dragged { root.probe(self.mouse-x, self.mouse-y); } }
+        double-clicked => { root.zoom(1, self.mouse-x, self.mouse-y); }
+        scroll-event(e) => {
+            root.zoom(e.delta-y > 0 ? 0.33 : e.delta-y < 0 ? -0.33 : 0, self.mouse-x, self.mouse-y);
+            accept
+        }
+    }
+
+    keys := FocusScope {
+        key-pressed(e) => {
+            if e.text == " " { root.toggle-play(); return accept; }
+            if e.text == Key.LeftArrow { root.step(-1); return accept; }
+            if e.text == Key.RightArrow { root.step(1); return accept; }
+            if e.text == "+" || e.text == "=" { root.zoom(0.5, root.width / 2, root.height / 2); return accept; }
+            if e.text == "-" { root.zoom(-0.5, root.width / 2, root.height / 2); return accept; }
+            if e.text == "l" { root.to-live(); return accept; }
+            if e.text == "f" { root.toggle-full(); return accept; }
+            if e.text == "r" { root.reload(); return accept; }
+            if e.text >= "1" && e.text <= "9" { root.pick-view(e.text.to-float() - 1); return accept; }
+            if e.text == "0" { root.pick-view(0); return accept; }
+            reject
+        }
+    }
+
+    ThinBar { y: 0; progress: root.loading; visible: root.loading > 0; }
+
+    VerticalLayout {
+        padding: 8px;
+        padding-top: root.banner != "" ? 42px : 8px;
+        spacing: 6px;
+        alignment: start;
+        HorizontalLayout {
+            spacing: 4px;
+            alignment: start;
+            for v[i] in root.views: Chip {
+                text: v.name;
+                key: i < 9 ? i + 1 : "";
+                checked: v.active;
+                clicked => { root.pick-view(i); }
+            }
+            IconButton { icon: Icons.plus; tip: "Save this view"; height: 26px; clicked => { root.add-view(); } }
+        }
+        HorizontalLayout {
+            spacing: 4px;
+            alignment: start;
+            Chip { text: "Warnings"; icon: Icons.alert-triangle; has-icon: true; checked: root.layer-alerts; clicked => { root.toggle-layer(0); } }
+            Chip { text: "Clouds"; icon: Icons.cloud; has-icon: true; checked: root.layer-clouds; clicked => { root.toggle-layer(1); } }
+            Chip { text: "Lightning"; icon: Icons.bolt; has-icon: true; checked: root.layer-lightning; clicked => { root.toggle-layer(2); } }
+        }
+    }
+
+    if root.eta-title != "": Rectangle {
+        x: 8px;
+        y: root.height - 42px - self.height - 8px - 18px;
+        width: 240px;
+        height: info.preferred-height + 16px;
+        background: Theme.surface;
+        border-width: 1px;
+        border-color: Theme.border;
+        border-radius: 6px;
+        info := VerticalLayout {
+            padding: 8px;
+            spacing: 2px;
+            Text { text: root.eta-title; color: Theme.text; font-size: 15px; font-weight: 700; }
+            Text { text: root.eta-text; color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
+            if root.bars.length > 0: HorizontalLayout {
+                height: 30px;
+                spacing: 1px;
+                for b in root.bars: Rectangle {
+                    Rectangle {
+                        y: parent.height - self.height;
+                        height: max(1px, parent.height * b.height);
+                        background: b.past ? Theme.surface-selected : Theme.primary;
+                    }
+                }
+            }
+        }
+    }
+
+    if root.probe-title != "": Rectangle {
+        x: min(root.probe-x + 10px, root.width - self.width - 8px);
+        y: min(root.probe-y + 10px, root.height - self.height - 60px);
+        width: 210px;
+        height: probe-box.preferred-height + 14px;
+        background: Theme.surface;
+        border-width: 1px;
+        border-color: Theme.border;
+        border-radius: 6px;
+        probe-box := VerticalLayout {
+            padding: 7px;
+            Text { text: root.probe-title; color: Theme.text; font-size: 12px; font-weight: 600; }
+            Text { text: root.probe-text; color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
+        }
+        TouchArea { clicked => { root.probe-close(); } }
+    }
+
+    // Legend and scale.
+    Rectangle {
+        x: root.width - self.width - 8px;
+        y: root.height - 42px - self.height - 8px;
+        width: 214px;
+        height: 42px;
+        background: Theme.scrim;
+        border-radius: 4px;
+        VerticalLayout {
+            padding-left: 8px;
+            padding-right: 8px;
+            padding-top: 5px;
+            spacing: 2px;
+            Rectangle {
+                height: 8px;
+                border-radius: 2px;
+                background: @linear-gradient(90deg, #74c7ec 0%, #3b82f6 20%, #22c55e 42%, #facc15 62%, #f97316 80%, #ef4444 92%, #d946ef 100%);
+            }
+            HorizontalLayout {
+                Text { text: "0.1"; color: Theme.text-muted; font-size: 9px; }
+                Text { text: "1"; color: Theme.text-muted; font-size: 9px; horizontal-alignment: center; horizontal-stretch: 1; }
+                Text { text: "10"; color: Theme.text-muted; font-size: 9px; horizontal-alignment: center; horizontal-stretch: 1; }
+                Text { text: "100 mm/h"; color: Theme.text-muted; font-size: 9px; }
+            }
+            HorizontalLayout {
+                spacing: 6px;
+                Rectangle { y: 5px; width: root.scale-width; height: 2px; background: Theme.text-muted; }
+                Text { text: root.scale-label; color: Theme.text-muted; font-size: 9px; }
+                Text { text: root.source-label; color: Theme.text-muted; font-size: 9px; horizontal-stretch: 1; horizontal-alignment: right; }
+            }
+        }
+    }
+
+    // Playback.
+    Rectangle {
+        x: 6px;
+        y: root.height - self.height - 6px;
+        width: root.width - 12px;
+        height: 38px;
+        background: Theme.scrim;
+        border-width: 1px;
+        border-color: Theme.border;
+        border-radius: 6px;
+        HorizontalLayout {
+            padding: 6px;
+            spacing: 3px;
+            IconButton {
+                icon: root.playing ? Icons.player-pause : Icons.player-play;
+                tip: "Play or pause (Space)";
+                primary: true;
+                clicked => { root.toggle-play(); }
+            }
+            IconButton { icon: Icons.player-track-prev; tip: "One picture back (Left)"; clicked => { root.step(-1); } }
+            IconButton { icon: Icons.player-track-next; tip: "One picture ahead (Right)"; clicked => { root.step(1); } }
+            IconButton { icon: Icons.player-skip-forward; tip: "Jump to now (L)"; clicked => { root.to-live(); } }
+            IconButton { icon: Icons.repeat; tip: "Repeat"; checked: root.looping; clicked => { root.toggle-loop(); } }
+            Rectangle {
+                horizontal-stretch: 1;
+                Timeline {
+                    x: 8px;
+                    y: 2px;
+                    width: parent.width - 16px;
+                    frames: root.frames;
+                    live: root.live;
+                    position: root.position;
+                    seek(p) => { root.seek(p); }
+                }
+            }
+            Text { text: root.time-label; color: Theme.text; font-size: 12px; font-weight: 700; vertical-alignment: center; min-width: 96px; horizontal-alignment: right; }
+            IconButton { icon: Icons.refresh; tip: "Reload (R)"; clicked => { root.reload(); } }
+            IconButton { icon: Icons.pin; tip: "Small radar window, always on top"; clicked => { root.mini(); } }
+            IconButton { icon: Icons.maximize; tip: "Fullscreen (F)"; checked: root.full; clicked => { root.toggle-full(); } }
+        }
+    }
+
+    if root.banner != "": Banner {
+        y: 0;
+        text: root.banner;
+        error: root.banner-error;
+        action: root.banner-action;
+        act => { root.banner-act(); }
+    }
+}

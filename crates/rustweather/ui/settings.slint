@@ -1,0 +1,316 @@
+// The settings window, built like RustCut's: pages on the left, cards on the right, every change applies at once.
+
+import { LineEdit, ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
+import { Card, Choice, Icon, IconButton, SettingRow, Slider, Switch, TextButton, TipLayer, Toast } from "controls.slint";
+
+export struct SettingsData {
+    theme: int, refresh: int, autostart: bool, log-level: int, station-url: string,
+    tile-bg: string, tile-fg: string,
+    show-rain: bool, show-alert: bool, show-stale: bool, show-trend: bool,
+    line-feels: bool, line-range: bool, line-rain: bool, line-alerts: bool, line-wind: bool, line-humidity: bool,
+    line-sun: bool, line-age: bool, line-next: bool,
+    source: int, basemap: int, palette: int, opacity: float, speed: float, smooth: bool, looping: bool, labels: bool,
+    has-carto: bool,
+    cache-limit: int, radar-hours: int, cache-text: string, cache-share: float,
+    al-paused: bool, al-rain: bool, al-end: bool, al-dwd: bool, al-storm: bool, al-frost: bool, al-heat: bool,
+    al-level: int, al-lead: float, al-night: bool, al-from: int, al-to: int, al-severe: bool, al-full: bool,
+    temp-unit: int, wind-unit: int,
+}
+
+export struct PlaceRow { name: string, active: bool }
+export struct HealthRow { name: string, state: int, last: string, latency: string, detail: string }
+
+component Sw inherits SettingRow {
+    in-out property <bool> on;
+    in property <string> key;
+    callback changed-to(string, bool);
+    Switch { y: 4px; checked: root.on; toggled(v) => { root.changed-to(root.key, v); } }
+}
+
+component Page inherits ScrollView {
+    in property <string> title;
+    VerticalLayout {
+        padding: 14px;
+        spacing: 10px;
+        alignment: start;
+        Text { text: root.title; color: Theme.text; font-size: 16px; font-weight: 700; }
+        @children
+    }
+}
+
+export component SettingsWindow inherits Window {
+    title: "RustWeather Settings";
+    preferred-width: 860px;
+    preferred-height: 640px;
+    min-width: 640px;
+    min-height: 420px;
+    background: Theme.background;
+    default-font-size: 13px;
+
+    in-out property <int> page;
+    in-out property <SettingsData> data;
+    in property <[PlaceRow]> places;
+    in property <[string]> search-results;
+    in property <[HealthRow]> health;
+    in property <string> key-state;
+    in property <string> version;
+    in property <string> toast;
+    in property <int> toast-level;
+    callback set-bool(string, bool);
+    callback set-int(string, int);
+    callback set-float(string, float);
+    callback set-text(string, string);
+    callback search-place(string);
+    callback add-place(int);
+    callback remove-place(int);
+    callback activate-place(int);
+    callback save-key(string);
+    callback test-key();
+    callback check-all();
+    callback copy-report();
+    callback open-log();
+    callback clear-cache();
+    callback open-cache();
+    callback offline-map();
+    public function copy-text(text: string) {
+        clipboard.text = text;
+        clipboard.select-all();
+        clipboard.copy();
+    }
+    clipboard := TextInput { visible: false; width: 0; height: 0; }
+
+    property <[{icon: image, name: string}]> pages: [
+        { icon: Icons.settings, name: "General" }, { icon: Icons.map-pin, name: "Places" }, { icon: Icons.bell, name: "Tray" },
+        { icon: Icons.map, name: "Radar" }, { icon: Icons.cloud, name: "Sources" }, { icon: Icons.database, name: "Cache" },
+        { icon: Icons.alert-triangle, name: "Alerts" }, { icon: Icons.gauge, name: "Units" }, { icon: Icons.keyboard, name: "Hotkeys" },
+        { icon: Icons.activity, name: "Diagnostics" }, { icon: Icons.info-circle, name: "About" }];
+
+    HorizontalLayout {
+        Rectangle {
+            width: 200px;
+            background: Theme.surface;
+            VerticalLayout {
+                padding: 8px;
+                spacing: 2px;
+                alignment: start;
+                for p[i] in root.pages: Rectangle {
+                    height: 34px;
+                    border-radius: 4px;
+                    background: i == root.page ? Theme.surface-selected : ta.has-hover ? Theme.surface-hover : transparent;
+                    HorizontalLayout {
+                        padding-left: 10px;
+                        spacing: 9px;
+                        Icon { source: p.icon; y: 9px; tint: i == root.page ? Theme.text : Theme.text-muted; }
+                        Text { text: p.name; color: Theme.text; font-weight: i == root.page ? 700 : 400; vertical-alignment: center; }
+                    }
+                    ta := TouchArea { clicked => { root.page = i; } }
+                }
+            }
+        }
+        Rectangle {
+            horizontal-stretch: 1;
+            if root.page == 0: Page {
+                title: "General";
+                Card {
+                    SettingRow { label: "Theme"; Choice { items: ["Follow system", "Dark", "Light"]; current: root.data.theme; selected(i) => { root.set-int("theme", i); } } }
+                    SettingRow { label: "Weather update"; detail: "Minutes between fetches. Paused while the screen is locked, and fetched right away when you are back.";
+                        Choice { items: ["5 minutes", "10 minutes", "15 minutes", "30 minutes", "60 minutes"]; current: root.data.refresh; selected(i) => { root.set-int("refresh", i); } } }
+                    Sw { label: "Start with the desktop"; key: "autostart"; on: root.data.autostart; changed-to(k, v) => { root.set-bool(k, v); } }
+                    SettingRow { label: "Log detail"; Choice { items: ["Errors", "Warnings", "Info", "Debug"]; current: root.data.log-level; selected(i) => { root.set-int("log-level", i); } } }
+                }
+            }
+            if root.page == 1: Page {
+                title: "Places";
+                Card {
+                    title: "Your places";
+                    for p[i] in root.places: HorizontalLayout {
+                        spacing: 6px;
+                        height: 28px;
+                        IconButton { icon: Icons.star; tip: "Show this place in the tray"; checked: p.active; clicked => { root.activate-place(i); } }
+                        Text { text: p.name; color: Theme.text; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+                        IconButton { icon: Icons.trash; tip: "Remove"; enabled: root.places.length > 1; clicked => { root.remove-place(i); } }
+                    }
+                }
+                Card {
+                    title: "Add a place";
+                    LineEdit {
+                        placeholder-text: "Type a name, then press Enter";
+                        accepted(t) => { root.search-place(t); }
+                    }
+                    for r[i] in root.search-results: Rectangle {
+                        height: 26px;
+                        border-radius: 3px;
+                        background: hit.has-hover ? Theme.surface-hover : transparent;
+                        Text { x: 6px; text: r; color: Theme.text; font-size: 12px; vertical-alignment: center; overflow: elide; }
+                        hit := TouchArea { clicked => { root.add-place(i); } }
+                    }
+                }
+            }
+            if root.page == 2: Page {
+                title: "Tray";
+                Card {
+                    title: "On the icon";
+                    Sw { label: "Blue dot: rain within the hour"; key: "show-rain"; on: root.data.show-rain; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Yellow triangle: active warning"; key: "show-alert"; on: root.data.show-alert; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Pale when the data is old"; key: "show-stale"; on: root.data.show-stale; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Small arrow: getting warmer or colder"; key: "show-trend"; on: root.data.show-trend; changed-to(k, v) => { root.set-bool(k, v); } }
+                    SettingRow { label: "Tile color"; detail: "Empty = the color of the temperature. Example: #1c2128";
+                        LineEdit { width: 120px; text: root.data.tile-bg; edited(t) => { root.set-text("tile-bg", t); } } }
+                    SettingRow { label: "Digit color";
+                        LineEdit { width: 120px; text: root.data.tile-fg; edited(t) => { root.set-text("tile-fg", t); } } }
+                }
+                Card {
+                    title: "In the tooltip";
+                    Sw { label: "Feels like"; key: "line-feels"; on: root.data.line-feels; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Low and high of today"; key: "line-range"; on: root.data.line-range; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "When rain comes or stops"; key: "line-rain"; on: root.data.line-rain; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Active warnings"; key: "line-alerts"; on: root.data.line-alerts; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Wind and gusts"; key: "line-wind"; on: root.data.line-wind; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Humidity and pressure"; key: "line-humidity"; on: root.data.line-humidity; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Sunrise or sunset"; key: "line-sun"; on: root.data.line-sun; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Age of the data"; key: "line-age"; on: root.data.line-age; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Next update"; key: "line-next"; on: root.data.line-next; changed-to(k, v) => { root.set-bool(k, v); } }
+                }
+            }
+            if root.page == 3: Page {
+                title: "Radar";
+                Card {
+                    SettingRow { label: "Source"; detail: "Auto uses the DWD over Germany and RainViewer elsewhere.";
+                        Choice { items: ["Auto", "DWD", "RainViewer"]; current: root.data.source; selected(i) => { root.set-int("source", i); } } }
+                    SettingRow { label: "Map"; detail: root.data.has-carto ? "" : "CARTO maps need a key (page Sources); until then the own map stands in.";
+                        Choice { items: ["CARTO dark", "CARTO Voyager", "Own map", "OpenStreetMap"]; current: root.data.basemap; selected(i) => { root.set-int("basemap", i); } } }
+                    SettingRow { label: "Rain colors"; Choice { items: ["Classic", "Calm", "Blue"]; current: root.data.palette; selected(i) => { root.set-int("palette", i); } } }
+                    SettingRow { label: "Rain opacity"; Slider { width: 200px; minimum: 20; maximum: 100; value: root.data.opacity; moved(v) => { root.set-float("opacity", v); } } }
+                    SettingRow { label: "Speed"; Slider { width: 200px; minimum: 60; maximum: 1000; value: 1060 - root.data.speed; moved(v) => { root.set-float("speed", 1060 - v); } } }
+                    Sw { label: "Smooth motion"; key: "smooth"; on: root.data.smooth; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Repeat"; key: "looping"; on: root.data.looping; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Place names above the rain"; key: "labels"; on: root.data.labels; changed-to(k, v) => { root.set-bool(k, v); } }
+                }
+            }
+            if root.page == 4: Page {
+                title: "Sources";
+                Card {
+                    title: "Weather";
+                    SettingRow { label: "Current weather"; detail: "DWD through Bright Sky, no key needed."; }
+                    SettingRow { label: "Forecast, air quality, pollen"; detail: "Open-Meteo, no key needed."; }
+                    SettingRow { label: "Station page as a fallback"; detail: "A wetterdienst.de address, read when the DWD data is out. Empty = off."; }
+                    LineEdit { text: root.data.station-url; edited(t) => { root.set-text("station-url", t); } }
+                }
+                Card {
+                    title: "CARTO key";
+                    SettingRow { label: "Key"; detail: "Stored in ~/.config/rustweather/secrets.toml, readable only by you."; }
+                    key-edit := LineEdit {
+                        input-type: password;
+                        placeholder-text: root.data.has-carto ? "A key is stored. Type to replace it." : "Paste your key here";
+                    }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        alignment: start;
+                        TextButton { text: "Save"; clicked => { root.save-key(key-edit.text); key-edit.text = ""; } }
+                        TextButton { text: "Test key"; icon: Icons.check; has-icon: true; clicked => { root.test-key(); } }
+                        Text { text: root.key-state; color: Theme.text-muted; font-size: 12px; vertical-alignment: center; }
+                    }
+                }
+            }
+            if root.page == 5: Page {
+                title: "Cache";
+                Card {
+                    Text { text: root.data.cache-text; color: Theme.text; }
+                    Rectangle {
+                        height: 10px;
+                        border-radius: 3px;
+                        background: Theme.surface-hover;
+                        Rectangle { x: 0; width: parent.width * root.data.cache-share; border-radius: 3px; background: Theme.primary; }
+                    }
+                }
+                Card {
+                    SettingRow { label: "Largest size"; Choice { items: ["100 MB", "300 MB", "500 MB", "1 GB", "2 GB"]; current: root.data.cache-limit; selected(i) => { root.set-int("cache-limit", i); } } }
+                    SettingRow { label: "Keep radar pictures"; Choice { items: ["6 hours", "24 hours", "3 days", "7 days"]; current: root.data.radar-hours; selected(i) => { root.set-int("radar-hours", i); } } }
+                }
+                HorizontalLayout {
+                    spacing: 6px;
+                    alignment: start;
+                    TextButton { text: "Get Germany's map for offline use"; icon: Icons.map; has-icon: true; clicked => { root.offline-map(); } }
+                    TextButton { text: "Open folder"; icon: Icons.folder-open; has-icon: true; clicked => { root.open-cache(); } }
+                    TextButton { text: "Empty cache"; icon: Icons.trash; has-icon: true; clicked => { root.clear-cache(); } }
+                }
+            }
+            if root.page == 6: Page {
+                title: "Alerts";
+                Card {
+                    title: "Tell me about";
+                    Sw { label: "Pause all notifications"; key: "al-paused"; on: root.data.al-paused; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Rain is coming"; key: "al-rain"; on: root.data.al-rain; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Rain is ending"; key: "al-end"; on: root.data.al-end; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Official DWD warnings"; key: "al-dwd"; on: root.data.al-dwd; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Thunderstorms nearby"; key: "al-storm"; on: root.data.al-storm; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Frost tonight"; key: "al-frost"; on: root.data.al-frost; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Heat"; key: "al-heat"; on: root.data.al-heat; changed-to(k, v) => { root.set-bool(k, v); } }
+                    SettingRow { label: "DWD warnings from"; Choice { items: ["Every warning", "Markant weather", "Severe weather", "Extreme only"]; current: root.data.al-level; selected(i) => { root.set-int("al-level", i); } } }
+                    SettingRow { label: "Rain warning ahead"; detail: "\{Math.round(root.data.al-lead)} minutes"; Slider { width: 200px; minimum: 5; maximum: 60; value: root.data.al-lead; moved(v) => { root.set-float("al-lead", v); } } }
+                }
+                Card {
+                    title: "Quiet";
+                    Sw { label: "Quiet at night"; key: "al-night"; on: root.data.al-night; changed-to(k, v) => { root.set-bool(k, v); } }
+                    SettingRow { label: "From"; Choice { items: ["18:00", "19:00", "20:00", "21:00", "22:00", "23:00", "0:00"]; current: root.data.al-from; selected(i) => { root.set-int("al-from", i); } } }
+                    SettingRow { label: "To"; Choice { items: ["5:00", "6:00", "7:00", "8:00", "9:00", "10:00"]; current: root.data.al-to; selected(i) => { root.set-int("al-to", i); } } }
+                    Sw { label: "Severe warnings get through anyway"; key: "al-severe"; on: root.data.al-severe; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Quiet during fullscreen programs"; key: "al-full"; on: root.data.al-full; changed-to(k, v) => { root.set-bool(k, v); } }
+                }
+            }
+            if root.page == 7: Page {
+                title: "Units";
+                Card {
+                    SettingRow { label: "Temperature"; Choice { items: ["°C", "°F"]; current: root.data.temp-unit; selected(i) => { root.set-int("temp-unit", i); } } }
+                    SettingRow { label: "Wind"; Choice { items: ["km/h", "m/s", "Beaufort"]; current: root.data.wind-unit; selected(i) => { root.set-int("wind-unit", i); } } }
+                }
+            }
+            if root.page == 8: Page {
+                title: "Hotkeys";
+                Card {
+                    title: "In the radar";
+                    for k in [["Space", "Play or pause"], ["Left, Right", "One picture back or ahead"], ["L", "Jump to now"], ["+, -", "Zoom"], ["1 to 9", "Saved views"], ["0", "Back to the first view"], ["F", "Fullscreen"], ["R", "Reload"]]: HorizontalLayout {
+                        spacing: 12px;
+                        Text { text: k[0]; color: Theme.text; width: 110px; font-weight: 600; }
+                        Text { text: k[1]; color: Theme.text-muted; }
+                    }
+                }
+            }
+            if root.page == 9: Page {
+                title: "Diagnostics";
+                Card {
+                    for h in root.health: HorizontalLayout {
+                        spacing: 8px;
+                        Rectangle { width: 8px; Rectangle { y: 5px; width: 8px; height: 8px; border-radius: 4px;
+                            background: h.state == 3 ? Theme.error : h.state == 2 ? Theme.warn : h.state == 1 ? Theme.ok : Theme.surface-selected; } }
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            Text { text: h.name; color: Theme.text; font-size: 12px; }
+                            if h.detail != "": Text { text: h.detail; color: Theme.error; font-size: 11px; wrap: word-wrap; }
+                        }
+                        Text { text: h.last; color: Theme.text-muted; font-size: 11px; }
+                        Text { text: h.latency; color: Theme.text-muted; font-size: 11px; width: 60px; horizontal-alignment: right; }
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 6px;
+                    alignment: start;
+                    TextButton { text: "Check all"; icon: Icons.activity; has-icon: true; clicked => { root.check-all(); } }
+                    TextButton { text: "Copy report"; icon: Icons.copy; has-icon: true; clicked => { root.copy-report(); } }
+                    TextButton { text: "Open log"; icon: Icons.file-text; has-icon: true; clicked => { root.open-log(); } }
+                }
+            }
+            if root.page == 10: Page {
+                title: "About";
+                Card {
+                    Text { text: "RustWeather " + root.version; color: Theme.text; font-weight: 700; }
+                    Text { text: "Weather data: DWD through Bright Sky, Open-Meteo, RainViewer. Maps: CARTO, OpenStreetMap contributors, Natural Earth. Icons: Tabler (MIT)."; color: Theme.text-muted; wrap: word-wrap; }
+                }
+            }
+            if root.toast != "": Toast { x: parent.width - self.width - 12px; y: 12px; text: root.toast; level: root.toast-level; }
+        }
+    }
+    TipLayer { window-width: root.width; window-height: root.height; }
+}

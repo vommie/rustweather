@@ -1,0 +1,359 @@
+// RustWeather's main window: a rail of pages, one page at a time, a one-line status at the bottom.
+
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
+import { Card, Icon, IconButton, StatusLine, Tile, TipLayer, Toast } from "controls.slint";
+import { AlertData, CityLabel, DayData, FrameCell, HourData, NowData, RainBar, ViewChip } from "types.slint";
+import { RadarPage } from "radar_page.slint";
+import { HealthRow, PlaceRow, SettingsData, SettingsWindow } from "settings.slint";
+import { FlyoutWindow } from "flyout.slint";
+import { MiniWindow } from "mini.slint";
+
+export { Theme, SettingsWindow, SettingsData, PlaceRow, HealthRow, FlyoutWindow, MiniWindow, NowData, HourData, DayData, AlertData, FrameCell, CityLabel, RainBar, ViewChip }
+
+component RailButton inherits Rectangle {
+    in property <image> icon;
+    in property <bool> active;
+    in property <string> tip;
+    in property <int> badge;
+    callback clicked();
+    IconButton {
+        width: 34px;
+        height: 34px;
+        icon: root.icon;
+        tip: root.tip;
+        checked: root.active;
+        icon-size: 18px;
+        clicked => { root.clicked(); }
+    }
+    if root.badge > 0: Rectangle {
+        x: 24px;
+        y: -2px;
+        width: 14px;
+        height: 14px;
+        border-radius: 7px;
+        background: Theme.warn;
+        Text { text: root.badge; color: Theme.on-primary; font-size: 9px; font-weight: 700; }
+    }
+    height: 34px;
+    width: 34px;
+}
+
+component NowPage inherits ScrollView {
+    in property <NowData> now;
+    VerticalLayout {
+        padding: 14px;
+        spacing: 10px;
+        alignment: start;
+        HorizontalLayout {
+            spacing: 14px;
+            Rectangle {
+                width: 120px;
+                height: 78px;
+                border-radius: 8px;
+                background: root.now.tile;
+                Text { text: root.now.temperature; color: #ffffff; font-size: 30px; font-weight: 700; }
+            }
+            VerticalLayout {
+                alignment: center;
+                Text { text: root.now.condition; color: Theme.text; font-size: 20px; font-weight: 700; }
+                Text { text: root.now.place; color: Theme.text-muted; }
+                Text { text: root.now.measured; color: Theme.text-muted; font-size: 11px; }
+            }
+        }
+        if root.now.rain-line != "": Text { text: root.now.rain-line; color: Theme.primary; font-weight: 600; }
+        HorizontalLayout {
+            spacing: 8px;
+            Tile { label: "Feels like"; value: root.now.feels; detail: root.now.range; }
+            Tile { label: "Wind"; value: root.now.wind; detail: root.now.gust; }
+            Tile { label: "Humidity"; value: root.now.humidity; detail: "Dew point " + root.now.dew; }
+            Tile { label: "Pressure"; value: root.now.pressure; }
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            Tile { label: "Visibility"; value: root.now.visibility; detail: root.now.clouds; }
+            Tile { label: "Rain, last hour"; value: root.now.precipitation; }
+            Tile { label: "UV index"; value: root.now.uv; }
+            Tile { label: "Air quality"; value: root.now.air; detail: root.now.air-detail; }
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            Tile { label: "Sunrise"; value: root.now.sunrise; }
+            Tile { label: "Sunset"; value: root.now.sunset; }
+            Tile { label: "Moon"; value: root.now.moon; }
+            Tile { label: "Pollen"; value: root.now.pollen; }
+        }
+        Card {
+            title: "Last 24 hours";
+            Rectangle {
+                height: 110px;
+                Path {
+                    width: 100%;
+                    height: 100%;
+                    commands: root.now.history-path;
+                    stroke: Theme.primary;
+                    stroke-width: 2px;
+                    viewbox-x: 0;
+                    viewbox-y: 0;
+                    viewbox-width: 1000;
+                    viewbox-height: 100;
+                }
+            }
+            Text { text: root.now.history-range; color: Theme.text-muted; font-size: 11px; }
+        }
+        Text { text: root.now.station; color: Theme.text-muted; font-size: 11px; }
+    }
+}
+
+component ForecastPage inherits ScrollView {
+    in property <[HourData]> hours;
+    in property <[DayData]> days;
+    VerticalLayout {
+        padding: 14px;
+        spacing: 10px;
+        alignment: start;
+        Card {
+            title: "Next hours";
+            HorizontalLayout {
+                height: 130px;
+                spacing: 2px;
+                for h in root.hours: VerticalLayout {
+                    Text { text: h.temperature; color: Theme.text; font-size: 11px; font-weight: 600; horizontal-alignment: center; }
+                    Rectangle {
+                        vertical-stretch: 1;
+                        Rectangle {
+                            y: parent.height * (1 - h.height);
+                            width: 100%;
+                            height: 2px;
+                            background: Theme.accent;
+                        }
+                        Rectangle {
+                            y: parent.height - self.height;
+                            height: parent.height * h.rain;
+                            background: Theme.primary;
+                        }
+                    }
+                    Text { text: h.probability; color: Theme.primary; font-size: 10px; horizontal-alignment: center; }
+                    Text { text: h.label; color: Theme.text-muted; font-size: 10px; horizontal-alignment: center; }
+                }
+            }
+        }
+        Card {
+            title: "Seven days";
+            for d in root.days: HorizontalLayout {
+                height: 28px;
+                spacing: 8px;
+                Text { text: d.label; color: Theme.text; width: 90px; vertical-alignment: center; }
+                Text { text: d.condition; color: Theme.text-muted; width: 110px; font-size: 12px; vertical-alignment: center; overflow: elide; }
+                Text { text: d.low; color: Theme.text-muted; width: 44px; horizontal-alignment: right; vertical-alignment: center; }
+                Rectangle {
+                    horizontal-stretch: 1;
+                    Rectangle {
+                        y: 12px;
+                        height: 4px;
+                        border-radius: 2px;
+                        background: Theme.surface-hover;
+                    }
+                    Rectangle {
+                        x: parent.width * d.start;
+                        y: 12px;
+                        width: parent.width * (d.end - d.start);
+                        height: 4px;
+                        border-radius: 2px;
+                        background: d.color;
+                    }
+                }
+                Text { text: d.high; color: Theme.text; width: 44px; vertical-alignment: center; }
+                Text { text: d.rain; color: Theme.primary; width: 60px; font-size: 12px; horizontal-alignment: right; vertical-alignment: center; }
+            }
+        }
+    }
+}
+
+component AlertsPage inherits ScrollView {
+    in property <[AlertData]> alerts;
+    VerticalLayout {
+        padding: 14px;
+        spacing: 10px;
+        alignment: start;
+        if root.alerts.length == 0: Text { text: "No warnings for this place."; color: Theme.text-muted; }
+        for a in root.alerts: Card {
+            HorizontalLayout {
+                spacing: 8px;
+                Icon { source: Icons.alert-triangle; tint: a.level >= 3 ? Theme.error : Theme.warn; }
+                Text { text: a.title; color: Theme.text; font-weight: 700; wrap: word-wrap; horizontal-stretch: 1; }
+            }
+            Text { text: a.time; color: Theme.text-muted; font-size: 11px; }
+            Text { text: a.text; color: Theme.text; wrap: word-wrap; font-size: 12px; }
+        }
+    }
+}
+
+export component MainWindow inherits Window {
+    title: "RustWeather";
+    icon: @image-url("../../../packaging/rustweather.svg");
+    preferred-width: 1100px;
+    preferred-height: 760px;
+    min-width: 640px;
+    min-height: 460px;
+    background: Theme.background;
+    default-font-size: 13px;
+
+    in-out property <int> page;
+    in property <NowData> now;
+    in property <[HourData]> hours;
+    in property <[DayData]> days;
+    in property <[AlertData]> alerts;
+    in property <string> status;
+    in property <int> status-level;
+    in property <string> toast;
+    in property <int> toast-level;
+    in property <bool> full;
+
+    in property <image> base;
+    in property <image> overlay;
+    in property <image> rain;
+    in property <image> labels;
+    in property <[CityLabel]> cities;
+    in property <[FrameCell]> frames;
+    in property <int> live;
+    in property <float> position;
+    in property <bool> playing;
+    in property <bool> looping;
+    in property <string> time-label;
+    in property <string> source-label;
+    in property <float> loading;
+    in property <string> banner;
+    in property <bool> banner-error;
+    in property <string> banner-action;
+    in property <string> eta-title;
+    in property <string> eta-text;
+    in property <[RainBar]> bars;
+    in property <string> probe-title;
+    in property <string> probe-text;
+    in property <length> probe-x;
+    in property <length> probe-y;
+    in property <length> home-x;
+    in property <length> home-y;
+    in property <string> scale-label;
+    in property <length> scale-width;
+    in property <[ViewChip]> views;
+    in property <bool> layer-alerts;
+    in property <bool> layer-clouds;
+    in property <bool> layer-lightning;
+
+    callback page-changed(int);
+    callback open-settings();
+    callback resized(length, length);
+    callback pan(length, length);
+    callback zoom(float, length, length);
+    callback probe(length, length);
+    callback probe-close();
+    callback seek(float);
+    callback toggle-play();
+    callback toggle-loop();
+    callback step(int);
+    callback to-live();
+    callback reload();
+    callback pick-view(int);
+    callback add-view();
+    callback toggle-layer(int);
+    callback toggle-full();
+    callback mini();
+    callback banner-act();
+
+    forward-focus: radar-scope;
+    HorizontalLayout {
+        if !root.full: Rectangle {
+            width: 46px;
+            background: Theme.surface;
+            VerticalLayout {
+                padding: 6px;
+                spacing: 6px;
+                RailButton { icon: Icons.sun; tip: "Now"; active: root.page == 0; clicked => { root.page = 0; root.page-changed(0); } }
+                RailButton { icon: Icons.calendar; tip: "Forecast"; active: root.page == 1; clicked => { root.page = 1; root.page-changed(1); } }
+                RailButton { icon: Icons.map; tip: "Radar"; active: root.page == 2; clicked => { root.page = 2; root.page-changed(2); } }
+                RailButton { icon: Icons.alert-triangle; tip: "Warnings"; active: root.page == 3; badge: root.alerts.length; clicked => { root.page = 3; root.page-changed(3); } }
+                Rectangle { vertical-stretch: 1; }
+                RailButton { icon: Icons.settings; tip: "Settings"; clicked => { root.open-settings(); } }
+            }
+        }
+        VerticalLayout {
+            horizontal-stretch: 1;
+            Rectangle {
+                vertical-stretch: 1;
+                if root.page == 0 && root.now.has-data: NowPage { now: root.now; }
+                if root.page == 0 && !root.now.has-data: Text {
+                    text: root.status == "" ? "Fetching the weather…" : root.status;
+                    color: Theme.text-muted;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                if root.page == 1 && root.days.length > 0: ForecastPage { hours: root.hours; days: root.days; }
+                if root.page == 1 && root.days.length == 0: Text {
+                    text: root.status == "" ? "Fetching the forecast…" : root.status;
+                    color: Theme.text-muted;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                radar-scope := RadarPage {
+                    visible: root.page == 2;
+                    base: root.base;
+                    overlay: root.overlay;
+                    rain: root.rain;
+                    labels: root.labels;
+                    cities: root.cities;
+                    frames: root.frames;
+                    live: root.live;
+                    position: root.position;
+                    playing: root.playing;
+                    looping: root.looping;
+                    time-label: root.time-label;
+                    source-label: root.source-label;
+                    loading: root.loading;
+                    banner: root.banner;
+                    banner-error: root.banner-error;
+                    banner-action: root.banner-action;
+                    eta-title: root.eta-title;
+                    eta-text: root.eta-text;
+                    bars: root.bars;
+                    probe-title: root.probe-title;
+                    probe-text: root.probe-text;
+                    probe-x: root.probe-x;
+                    probe-y: root.probe-y;
+                    home-x: root.home-x;
+                    home-y: root.home-y;
+                    scale-label: root.scale-label;
+                    scale-width: root.scale-width;
+                    views: root.views;
+                    layer-alerts: root.layer-alerts;
+                    layer-clouds: root.layer-clouds;
+                    layer-lightning: root.layer-lightning;
+                    full: root.full;
+                    resized(w, h) => { root.resized(w, h); }
+                    pan(x, y) => { root.pan(x, y); }
+                    zoom(s, x, y) => { root.zoom(s, x, y); }
+                    probe(x, y) => { root.probe(x, y); }
+                    probe-close => { root.probe-close(); }
+                    seek(p) => { root.seek(p); }
+                    toggle-play => { root.toggle-play(); }
+                    toggle-loop => { root.toggle-loop(); }
+                    step(n) => { root.step(n); }
+                    to-live => { root.to-live(); }
+                    reload => { root.reload(); }
+                    pick-view(i) => { root.pick-view(i); }
+                    add-view => { root.add-view(); }
+                    toggle-layer(i) => { root.toggle-layer(i); }
+                    toggle-full => { root.toggle-full(); }
+                    mini => { root.mini(); }
+                    banner-act => { root.banner-act(); }
+                }
+                if root.page == 3: AlertsPage { alerts: root.alerts; }
+                if root.toast != "": Toast { x: parent.width - self.width - 12px; y: 42px; text: root.toast; level: root.toast-level; }
+            }
+            if !root.full: StatusLine { text: root.status; level: root.status-level; }
+        }
+    }
+    TipLayer { window-width: root.width; window-height: root.height; }
+}

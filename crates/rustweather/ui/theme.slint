@@ -1,0 +1,27 @@
+// RustCut's palette, plus a light one (Catppuccin Latte) that the system's color scheme selects.
+
+import { Palette } from "std-widgets.slint";
+
+export global Theme {
+    // 0 = follow the system, 1 = dark, 2 = light.
+    in-out property <int> mode: 0;
+    out property <bool> dark: mode == 0 ? Palette.color-scheme != ColorScheme.light : mode == 1;
+    out property <color> background: dark ? #181825 : #e6e9ef;
+    out property <color> surface: dark ? #1e1e2e : #eff1f5;
+    out property <color> surface-variant: dark ? #252538 : #dce0e8;
+    out property <color> surface-hover: dark ? #313244 : #ccd0da;
+    out property <color> surface-selected: dark ? #45475a : #bcc0cc;
+    out property <color> border: dark ? #313244 : #ccd0da;
+    out property <color> text: dark ? #cdd6f4 : #4c4f69;
+    out property <color> text-muted: dark ? #a6adc8 : #6c6f85;
+    out property <color> text-disabled: dark ? #6c7086 : #9ca0b0;
+    out property <color> primary: dark ? #89b4fa : #1e66f5;
+    out property <color> on-primary: dark ? #11111b : #ffffff;
+    out property <color> accent: dark ? #f9e2af : #df8e1d;
+    out property <color> ok: dark ? #a6e3a1 : #40a02b;
+    out property <color> warn: dark ? #f9e2af : #df8e1d;
+    out property <color> error: dark ? #f38ba8 : #d20f39;
+    out property <color> forecast: dark ? #cba6f7 : #8839ef;
+    out property <color> map-back: dark ? #11111b : #c9dcee;
+    out property <color> scrim: dark ? #181825ee : #eff1f5ee;
+}

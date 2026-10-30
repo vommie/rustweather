@@ -1,0 +1,33 @@
+[package]
+name = "rustweather"
+description = "The temperature in your tray and a weather radar that leaves nothing to wish for."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+rustweather-core.workspace = true
+slint.workspace = true
+clap.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-appender.workspace = true
+tokio.workspace = true
+chrono.workspace = true
+ksni.workspace = true
+zbus.workspace = true
+notify-rust.workspace = true
+interprocess.workspace = true
+opener.workspace = true
+parking_lot.workspace = true
+thiserror.workspace = true
+x11rb.workspace = true
+serde_json.workspace = true
+
+[build-dependencies]
+slint-build.workspace = true

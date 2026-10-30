@@ -1,0 +1,12 @@
+/target/
+dist/
+packaging/pkg/
+packaging/src/
+*.pkg.tar.zst
+.idea/
+.vscode/
+*.swp
+*.log
+# Never commit API keys or local app data.
+secrets.toml
+.env
