@@ -1,0 +1,73 @@
+# Maintainer: vommie
+# Generated from packaging/PKGBUILD.in by build-package.sh (version, release and checksum are filled in).
+pkgname=rustweather
+pkgver=@VERSION@
+pkgrel=@PKGREL@
+pkgdesc='The temperature in your tray and a weather radar that leaves nothing to wish for (Rust, Slint)'
+arch=('x86_64')
+url='https://github.com/vommie/rustweather'
+license=('MIT')
+# namcap calls most of these "may not be needed" because nothing links them: the windowing layer loads the X11, Wayland
+# and OpenGL libraries at run time, and the tray, notifications and screen lock talk over D-Bus.
+depends=(
+  'glibc' 'libgcc'
+  'fontconfig' 'freetype2'
+  'libxkbcommon' 'libxkbcommon-x11' 'libx11' 'libxcb' 'libxcursor' 'libxi' 'libxrender'
+  'wayland' 'libglvnd' 'dbus'
+  'hicolor-icon-theme'
+)
+makedepends=('cargo')
+optdepends=(
+  'plasma-workspace: shows the tray icon; any StatusNotifierItem host works'
+)
+# makepkg's default LTO flags clash with the release profile's own LTO.
+options=('!lto')
+source=("$pkgname-$pkgver.tar.gz")
+sha256sums=('@SHA256@')
+
+# Generated code (Slint's UI) is compiled from the build folder, whose path would end up in the binary's panic
+# locations: remap it like makepkg's debug option does.
+_rustflags() {
+  export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$srcdir=/usr/src/debug/$pkgname"
+}
+
+prepare() {
+  cd "$pkgname-$pkgver"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd "$pkgname-$pkgver"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  _rustflags
+  cargo build --frozen --release -p rustweather
+}
+
+# Only with `build-package.sh --check` (scripts/check-all.sh already runs the tests).
+check() {
+  cd "$pkgname-$pkgver"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  _rustflags
+  cargo test --frozen --release --workspace
+}
+
+package() {
+  cd "$pkgname-$pkgver"
+  local id=io.github.vommie.rustweather
+  install -Dm755 "target/release/$pkgname" "$pkgdir/usr/bin/$pkgname"
+  # Notifications name this desktop file, and the window class matches it, so its name must not change.
+  install -Dm644 "packaging/$id.desktop" "$pkgdir/usr/share/applications/$id.desktop"
+  sed -e "s/@VERSION@/$pkgver/" -e "s/@DATE@/$(date -u +%F -d "@${SOURCE_DATE_EPOCH:-$(date +%s)}")/" \
+    "packaging/$id.metainfo.xml" > "$srcdir/$id.metainfo.xml"
+  install -Dm644 "$srcdir/$id.metainfo.xml" "$pkgdir/usr/share/metainfo/$id.metainfo.xml"
+  install -Dm644 "packaging/$pkgname.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/$pkgname.svg"
+  for size in 16 22 24 32 48 64 128 256 512; do
+    install -Dm644 "packaging/icons/$pkgname-$size.png" "$pkgdir/usr/share/icons/hicolor/${size}x${size}/apps/$pkgname.png"
+  done
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+  install -Dm644 CHANGELOG.md "$pkgdir/usr/share/doc/$pkgname/CHANGELOG.md"
+}
