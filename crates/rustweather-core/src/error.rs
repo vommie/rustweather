@@ -16,6 +16,8 @@ pub enum Error {
     Serialize(#[from] toml::ser::Error),
     #[error("no connection to {host}")]
     Offline { host: String },
+    #[error("{host} took too long to answer")]
+    Timeout { host: String },
     #[error("{host} answered with HTTP {status}")]
     Http { host: String, status: u16 },
     #[error("{host} allows no more requests right now")]
@@ -48,7 +50,7 @@ impl Error {
     pub fn is_transient(&self) -> bool {
         matches!(
             self,
-            Self::Offline { .. } | Self::RateLimited { .. } | Self::Http { status: 500.., .. }
+            Self::Offline { .. } | Self::Timeout { .. } | Self::RateLimited { .. } | Self::Http { status: 500.., .. }
         )
     }
 }

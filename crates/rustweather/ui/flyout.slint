@@ -6,6 +6,7 @@ import { IconButton, Icon, TipLayer } from "controls.slint";
 import { HourData, NowData, RainBar } from "types.slint";
 
 export component FlyoutWindow inherits Window {
+    title: "RustWeather Card";
     no-frame: true;
     always-on-top: true;
     width: 320px;
@@ -80,5 +81,5 @@ export component FlyoutWindow inherits Window {
             }
         }
     }
-    TipLayer { window-width: root.width; window-height: root.height; }
+    TipLayer { width: root.width; height: root.height; }
 }

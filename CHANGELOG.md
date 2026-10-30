@@ -5,6 +5,29 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- The Now page is redesigned: a colored summary, symbols, small gauges for wind, UV, air and the sun, and a clearer 24-hour curve.
+- The Forecast page has a temperature curve, a legend, named columns, weather symbols and tooltips on every hour and day.
+- The app icon now matches RustView, RustCut and RustKnown.
+
+### Added
+
+- Every window comes back with its size and place, maximized or not.
+
+### Fixed
+
+- The weather card no longer opens in the top left corner of the screen now and then.
+- Logs say what really failed: a slow server is no longer reported as "no connection", a stalled name lookup is retried, and a failing
+  map layer is not asked again in a loop.
+- The first press on the radar map was lost, so a first drag did nothing.
+- Tooltips never appeared; now every button, card and chart explains itself.
+
+- Clouds, warnings and lightning now stay on their place on the map and follow every pan and zoom at once; warnings no longer wait
+  for the slow lightning data.
+- The notice about a missing CARTO key disappears as soon as a key is stored.
+- The Settings button of that notice, and anything else that opens a window, now brings an already open window to the front.
+
 ## [0.1.0] - 2026-10-30
 
 First release, replacing the `weather_tray.py` script.

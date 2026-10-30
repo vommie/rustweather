@@ -9,8 +9,8 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Utc};
 use rayon::prelude::*;
 
-use super::clouds::{self, Clouds};
 use super::dwd::{self, Lut, Projector};
+use super::layers::{self, KINDS, Kind, Loaded};
 use super::motion::{self, Field};
 use super::palette::{self, Ramp};
 use super::rainviewer;
@@ -19,15 +19,16 @@ use super::{FrameInfo, FrameState};
 use crate::error::{Error, Result};
 use crate::http::Http;
 use crate::map::tiles::{self, Layer, Store};
-use crate::map::{View, in_germany, labels, vector};
+use crate::map::{Extent, View, in_germany, labels, vector};
 use crate::settings::{Basemap, RadarSource, RainPalette};
 
 const REFRESH: Duration = Duration::from_secs(5 * 60);
 const SLOW_AFTER: Duration = Duration::from_secs(6);
 const RETRIES: [u64; 4] = [10, 30, 60, 300];
-const OVERLAY_DELAY: Duration = Duration::from_millis(350);
-const CLOUDS_DELAY: Duration = Duration::from_millis(800);
+const LAYER_DELAY: Duration = Duration::from_millis(150);
 const CLOUDS_MAX_AGE: Duration = Duration::from_secs(30 * 60);
+const LAYER_MAX_AGE: Duration = Duration::from_secs(5 * 60);
+const LAYER_RETRY: Duration = Duration::from_secs(60);
 const WIND_FRAME: Duration = Duration::from_millis(33);
 const WIND_DELAY: Duration = Duration::from_millis(600);
 const WIND_MAX_AGE: Duration = Duration::from_secs(15 * 60);
@@ -83,19 +84,25 @@ pub enum Notice {
     MissingKey {
         service: String,
     },
+    /// The chosen map works: whatever was said about its key is over.
+    MapReady,
     Fallback {
         text: String,
     },
 }
 
 pub enum Event {
-    Base(Picture),
-    Overlay(Option<Picture>),
+    /// The map, and the view it shows: layers take their place from it, so they move in step.
+    Base(Picture, View),
+    /// A picture layer and the stretch of the map it shows; `None` takes it away.
+    Layer {
+        kind: Kind,
+        picture: Option<(Picture, Extent)>,
+        time: Option<DateTime<Utc>>,
+    },
     Rain(Picture),
     Labels(Option<Picture>),
     Wind(Option<Picture>),
-    /// The satellite picture and the time it was taken.
-    Clouds(Option<(Picture, DateTime<Utc>)>),
     Cities(Vec<(String, f32, f32)>),
     Timeline {
         frames: Vec<FrameInfo>,
@@ -129,13 +136,11 @@ pub enum Command {
     Close,
     DwdLoaded(Result<Vec<dwd::Frame>>),
     RvLoaded(Result<Vec<rainviewer::Frame>>),
-    OverlayLoaded {
-        view: View,
-        result: Result<Vec<u8>>,
-    },
-    CloudsLoaded {
-        view: View,
-        result: Result<Clouds>,
+    LayerLoaded {
+        kind: Kind,
+        extent: Extent,
+        zoom: f64,
+        result: Result<Loaded>,
     },
     KeyChecked(bool),
     WindLoaded {
@@ -196,11 +201,9 @@ pub fn start(setup: Setup, events: impl Fn(Event) + Send + 'static) -> Result<Ha
         retry_at: None,
         layer_failed: false,
         key_checked: None,
-        overlay_due: None,
+        slots: Default::default(),
+        key_banner: false,
         away: false,
-        clouds_due: None,
-        clouds_at: None,
-        clouds_busy: false,
         wind: None,
         flow: None,
         wind_at: None,
@@ -219,7 +222,7 @@ pub fn start(setup: Setup, events: impl Fn(Event) + Send + 'static) -> Result<Ha
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Kind {
+enum Provider {
     Dwd,
     RainViewer,
 }
@@ -249,11 +252,10 @@ struct Worker {
     retry_at: Option<Instant>,
     layer_failed: bool,
     key_checked: Option<String>,
-    overlay_due: Option<Instant>,
+    slots: [Slot; 3],
+    /// A notice about the map's key is up.
+    key_banner: bool,
     away: bool,
-    clouds_due: Option<Instant>,
-    clouds_at: Option<Instant>,
-    clouds_busy: bool,
     wind: Option<WindField>,
     flow: Option<Flow>,
     wind_at: Option<Instant>,
@@ -282,38 +284,14 @@ pub async fn carto_key_works(http: &Http, key: &str) -> Result<bool> {
     Ok(with_key != without)
 }
 
-/// Warnings and lightning from the DWD's map server, one picture for the whole view.
-fn overlay_url(view: &View, config: &Config) -> Option<String> {
-    let mut layers = Vec::new();
-    if config.alerts_layer {
-        layers.push("dwd:Warnungen_Landkreise");
-    }
-    if config.lightning_layer {
-        layers.push("dwd:Accumulated_Flash_Geometry");
-    }
-    if layers.is_empty() {
-        return None;
-    }
-    let half = 6_378_137.0 * std::f64::consts::PI;
-    let scale = view.scale();
-    let (cx, cy) = crate::map::to_unit(view.lon, view.lat);
-    let (ux0, ux1) = (
-        cx - f64::from(view.width) / 2.0 / scale,
-        cx + f64::from(view.width) / 2.0 / scale,
-    );
-    let (uy0, uy1) = (
-        cy - f64::from(view.height) / 2.0 / scale,
-        cy + f64::from(view.height) / 2.0 / scale,
-    );
-    let (x0, x1) = ((ux0 * 2.0 - 1.0) * half, (ux1 * 2.0 - 1.0) * half);
-    let (y0, y1) = ((1.0 - uy1 * 2.0) * half, (1.0 - uy0 * 2.0) * half);
-    Some(format!(
-        "https://maps.dwd.de/geoserver/dwd/wms?service=WMS&version=1.3.0&request=GetMap&layers={}&styles=&crs=EPSG:3857\
-         &bbox={x0},{y0},{x1},{y1}&width={}&height={}&format=image/png&transparent=true",
-        layers.join(","),
-        view.width,
-        view.height
-    ))
+/// One picture layer: what it holds, and when it wants new data.
+#[derive(Default)]
+struct Slot {
+    due: Option<Instant>,
+    busy: bool,
+    /// The stretch of the map and the zoom of the picture in use.
+    cover: Option<(Extent, f64)>,
+    at: Option<Instant>,
 }
 
 impl Worker {
@@ -321,12 +299,12 @@ impl Worker {
         (self.events)(event);
     }
 
-    fn kind(&self) -> Kind {
+    fn kind(&self) -> Provider {
         match self.config.source {
-            RadarSource::Dwd => Kind::Dwd,
-            RadarSource::RainViewer => Kind::RainViewer,
-            RadarSource::Auto if in_germany(self.view.lon, self.view.lat) => Kind::Dwd,
-            RadarSource::Auto => Kind::RainViewer,
+            RadarSource::Dwd => Provider::Dwd,
+            RadarSource::RainViewer => Provider::RainViewer,
+            RadarSource::Auto if in_germany(self.view.lon, self.view.lat) => Provider::Dwd,
+            RadarSource::Auto => Provider::RainViewer,
         }
     }
 
@@ -366,10 +344,10 @@ impl Worker {
         if self.wind_on() {
             return WIND_FRAME;
         }
-        match self.overlay_due {
-            Some(t) => t.saturating_duration_since(Instant::now()).min(Duration::from_secs(1)),
-            None => Duration::from_secs(1),
-        }
+        let next = self.slots.iter().filter_map(|s| s.due).min();
+        next.map_or(Duration::from_secs(1), |t| {
+            t.saturating_duration_since(Instant::now()).min(Duration::from_secs(1))
+        })
     }
 
     fn apply(&mut self, command: Command) -> bool {
@@ -382,10 +360,9 @@ impl Worker {
                     self.lut = None;
                     self.base_dirty = true;
                     self.rain_dirty = true;
-                    self.overlay_due = Some(Instant::now() + OVERLAY_DELAY);
+                    self.schedule_layers(LAYER_DELAY);
                     self.flow = None;
                     self.wind_due = Some(Instant::now() + WIND_DELAY);
-                    self.clouds_due = Some(Instant::now() + CLOUDS_DELAY);
                     if self.kind() != before {
                         self.load_cached();
                         self.fetch();
@@ -402,17 +379,26 @@ impl Worker {
             Command::Config(config) => {
                 self.ramp = palette::ramp(config.palette);
                 let source_changed = config.source != self.config.source;
+                let before = KINDS.map(|kind| self.layer_on(kind));
                 self.config = *config;
                 self.layer_failed = false;
                 self.base_dirty = true;
                 self.rain_dirty = true;
-                self.overlay_due = Some(Instant::now());
                 self.wind_due = Some(Instant::now());
-                self.clouds_due = Some(Instant::now());
                 self.check_key();
-                if !self.config.clouds_layer {
-                    self.emit(Event::Clouds(None));
+                for kind in KINDS {
+                    if before[kind.index()] != self.layer_on(kind) {
+                        self.slots[kind.index()] = Slot::default();
+                        if !self.layer_on(kind) {
+                            self.emit(Event::Layer {
+                                kind,
+                                picture: None,
+                                time: None,
+                            });
+                        }
+                    }
                 }
+                self.schedule_layers(Duration::ZERO);
                 if !self.config.wind_layer {
                     self.flow = None;
                     self.emit(Event::Wind(None));
@@ -439,9 +425,8 @@ impl Worker {
                     self.publish_timeline();
                     self.base_dirty = true;
                     self.rain_dirty = true;
-                    self.overlay_due = Some(Instant::now());
                     self.wind_due = Some(Instant::now());
-                    self.clouds_due = Some(Instant::now());
+                    self.schedule_layers(Duration::ZERO);
                     self.check_key();
                     if self.last_fetch.is_none_or(|t| t.elapsed() >= REFRESH) {
                         self.fetch();
@@ -474,45 +459,12 @@ impl Worker {
                 }
                 Err(e) => self.failed(&e),
             },
-            Command::OverlayLoaded { view, result } => match result {
-                Ok(bytes) if view == self.view => {
-                    if let Some(image) = image::load_from_memory(&bytes)
-                        .ok()
-                        .map(image::DynamicImage::into_rgba8)
-                    {
-                        let (width, height) = image.dimensions();
-                        self.emit(Event::Overlay(Some(Picture {
-                            width,
-                            height,
-                            rgba: Arc::new(image.into_raw()),
-                        })));
-                    }
-                }
-                Ok(_) => {}
-                Err(e) => tracing::warn!(error = %e, "[Radar] A map layer failed"),
-            },
-            Command::CloudsLoaded { view, result } => {
-                self.clouds_busy = false;
-                match result {
-                    Ok(c) if view == self.view && self.config.clouds_layer => {
-                        self.clouds_at = Some(Instant::now());
-                        let picture = Picture {
-                            width: c.width,
-                            height: c.height,
-                            rgba: Arc::new(c.rgba),
-                        };
-                        self.emit(Event::Clouds(Some((picture, c.time))));
-                    }
-                    Ok(_) => self.clouds_due = Some(Instant::now()),
-                    Err(e) => {
-                        tracing::warn!(error = %e, "[Radar] Clouds failed");
-                        self.clouds_at = Some(Instant::now());
-                        self.emit(Event::Notice(Notice::Fallback {
-                            text: "No cloud picture right now".into(),
-                        }));
-                    }
-                }
-            }
+            Command::LayerLoaded {
+                kind,
+                extent,
+                zoom,
+                result,
+            } => self.layer_loaded(kind, extent, zoom, result),
             Command::WindLoaded { result } => {
                 self.wind_busy = false;
                 self.wind_at = Some(Instant::now());
@@ -530,6 +482,7 @@ impl Worker {
             Command::KeyChecked(valid) => {
                 if !valid && !self.layer_failed {
                     self.layer_failed = true;
+                    self.key_banner = true;
                     self.base_dirty = true;
                     self.emit(Event::Notice(Notice::BadKey {
                         service: "CARTO".into(),
@@ -548,6 +501,7 @@ impl Worker {
                 Err(e @ Error::BadKey { .. }) if base => {
                     if !self.layer_failed {
                         self.layer_failed = true;
+                        self.key_banner = true;
                         if let Error::BadKey { service } = e {
                             self.emit(Event::Notice(Notice::BadKey { service }));
                         }
@@ -577,8 +531,8 @@ impl Worker {
 
     fn data_time(&self) -> Option<DateTime<Utc>> {
         match self.kind() {
-            Kind::Dwd => self.grid.iter().map(|f| f.time).filter(|t| *t <= Utc::now()).max(),
-            Kind::RainViewer => self.rv.last().map(|f| f.time),
+            Provider::Dwd => self.grid.iter().map(|f| f.time).filter(|t| *t <= Utc::now()).max(),
+            Provider::RainViewer => self.rv.last().map(|f| f.time),
         }
     }
 
@@ -592,8 +546,8 @@ impl Worker {
 
     fn source_name(&self) -> String {
         match self.kind() {
-            Kind::Dwd => "DWD",
-            Kind::RainViewer => "RainViewer",
+            Provider::Dwd => "DWD",
+            Provider::RainViewer => "RainViewer",
         }
         .to_owned()
     }
@@ -627,7 +581,7 @@ impl Worker {
     /// What the radar says about one point of the map.
     fn probe(&self, lon: f64, lat: f64) {
         let title = format!("{lat:.2}°, {lon:.2}°");
-        let text = if self.kind() == Kind::RainViewer {
+        let text = if self.kind() == Provider::RainViewer {
             "Exact values are available over Germany.".to_owned()
         } else {
             let index = (self.position.max(0.0) as usize).min(self.grid.len().saturating_sub(1));
@@ -694,36 +648,94 @@ impl Worker {
         });
     }
 
-    fn fetch_overlay(&self) {
-        let view = self.view;
-        let Some(url) = overlay_url(&view, &self.config) else {
-            self.emit(Event::Overlay(None));
-            return;
-        };
-        let (http, tx) = (self.http.clone(), self.tx.clone());
-        self.runtime.spawn(async move {
-            let _ = tx.send(Command::OverlayLoaded {
-                view,
-                result: http.bytes(&url).await,
-            });
-        });
+    fn layer_on(&self, kind: Kind) -> bool {
+        match kind {
+            Kind::Clouds => self.config.clouds_layer,
+            Kind::Warnings => self.config.alerts_layer,
+            Kind::Lightning => self.config.lightning_layer,
+        }
     }
 
-    fn fetch_clouds(&mut self) {
-        let stale = self.clouds_at.is_some_and(|t| t.elapsed() >= CLOUDS_MAX_AGE);
-        let due = self.clouds_due.is_some_and(|t| t <= Instant::now());
-        if !self.config.clouds_layer || self.clouds_busy || !(due || stale) {
-            return;
+    /// Asks for a picture only where the one in use no longer serves the view.
+    fn schedule_layers(&mut self, delay: Duration) {
+        let view = self.view;
+        for kind in KINDS {
+            let on = self.layer_on(kind);
+            let slot = &mut self.slots[kind.index()];
+            let served = slot
+                .cover
+                .is_some_and(|(extent, zoom)| layers::covers(&extent, zoom, &view));
+            if on && !served && slot.due.is_none() {
+                slot.due = Some(Instant::now() + delay);
+            }
         }
-        self.clouds_due = None;
-        self.clouds_busy = true;
-        let (http, tx, view) = (self.http.clone(), self.tx.clone(), self.view);
-        self.runtime.spawn(async move {
-            let _ = tx.send(Command::CloudsLoaded {
-                view,
-                result: clouds::fetch(&http, &view).await,
+    }
+
+    fn layer_loaded(&mut self, kind: Kind, extent: Extent, zoom: f64, result: Result<Loaded>) {
+        let on = self.layer_on(kind);
+        let slot = &mut self.slots[kind.index()];
+        slot.busy = false;
+        slot.at = Some(Instant::now());
+        match result {
+            // A picture for an older view is still right about its place on the map.
+            Ok(loaded) if on => {
+                slot.cover = Some((extent, zoom));
+                let picture = Picture {
+                    width: loaded.width,
+                    height: loaded.height,
+                    rgba: Arc::new(loaded.rgba),
+                };
+                self.emit(Event::Layer {
+                    kind,
+                    picture: Some((picture, extent)),
+                    time: loaded.time,
+                });
+            }
+            Ok(_) => {}
+            Err(e) => {
+                tracing::warn!(error = %e, ?kind, "[Radar] A map layer failed");
+                // Not at once: a server in trouble must not be asked again in a loop.
+                self.slots[kind.index()].due = Some(Instant::now() + LAYER_RETRY);
+                if kind == Kind::Clouds {
+                    self.emit(Event::Notice(Notice::Fallback {
+                        text: "No cloud picture right now".into(),
+                    }));
+                }
+            }
+        }
+        // The map may have moved on while this was under way.
+        self.schedule_layers(Duration::ZERO);
+    }
+
+    fn fetch_layers(&mut self) {
+        let view = self.view;
+        let now = Instant::now();
+        for kind in KINDS {
+            let on = self.layer_on(kind);
+            let max_age = if kind == Kind::Clouds {
+                CLOUDS_MAX_AGE
+            } else {
+                LAYER_MAX_AGE
+            };
+            let slot = &mut self.slots[kind.index()];
+            let stale = slot.at.is_some_and(|t| t.elapsed() >= max_age);
+            if !on || slot.busy || !(stale || slot.due.is_some_and(|t| t <= now)) {
+                continue;
+            }
+            slot.due = None;
+            slot.busy = true;
+            let extent = view.extent(layers::MARGIN);
+            let (http, tx) = (self.http.clone(), self.tx.clone());
+            self.runtime.spawn(async move {
+                let result = layers::fetch(&http, kind, &extent, &view).await;
+                let _ = tx.send(Command::LayerLoaded {
+                    kind,
+                    extent,
+                    zoom: view.zoom,
+                    result,
+                });
             });
-        });
+        }
     }
 
     fn wind_on(&self) -> bool {
@@ -775,13 +787,9 @@ impl Worker {
         if self.wind_at.is_some_and(|t| t.elapsed() >= WIND_MAX_AGE) && self.wind_due.is_none() {
             self.wind_due = Some(Instant::now());
         }
-        self.fetch_clouds();
+        self.fetch_layers();
         self.fetch_wind();
         self.animate_wind();
-        if self.overlay_due.is_some_and(|t| t <= Instant::now()) {
-            self.overlay_due = None;
-            self.fetch_overlay();
-        }
         if let Some(started) = self.fetching
             && started.elapsed() > SLOW_AFTER
             && !self.slow_said
@@ -799,7 +807,7 @@ impl Worker {
 
     /// The last radar from the disk, so the window has rain before the network answers.
     fn load_cached(&mut self) {
-        if self.kind() == Kind::Dwd
+        if self.kind() == Provider::Dwd
             && self.grid.is_empty()
             && let Some(frames) = dwd::load_cached(&self.grid_cache)
         {
@@ -816,13 +824,13 @@ impl Worker {
         self.emit(Event::Notice(Notice::Loading { done: 0, total: 1 }));
         let (http, tx) = (self.http.clone(), self.tx.clone());
         match self.kind() {
-            Kind::Dwd => {
+            Provider::Dwd => {
                 let cache = self.grid_cache.clone();
                 self.runtime.spawn(async move {
                     let _ = tx.send(Command::DwdLoaded(dwd::fetch(&http, &cache).await));
                 });
             }
-            Kind::RainViewer => {
+            Provider::RainViewer => {
                 self.runtime.spawn(async move {
                     let _ = tx.send(Command::RvLoaded(rainviewer::frames(&http).await));
                 });
@@ -833,8 +841,8 @@ impl Worker {
     fn publish_timeline(&mut self) {
         let now = Utc::now();
         let (times, states): (Vec<_>, Vec<_>) = match self.kind() {
-            Kind::Dwd => self.grid.iter().map(|f| (f.time, FrameState::Ready)).unzip(),
-            Kind::RainViewer => self.rv.iter().map(|f| (f.time, self.rv_state(f))).unzip(),
+            Provider::Dwd => self.grid.iter().map(|f| (f.time, FrameState::Ready)).unzip(),
+            Provider::RainViewer => self.rv.iter().map(|f| (f.time, self.rv_state(f))).unzip(),
         };
         let live = times.iter().rposition(|t| *t <= now).unwrap_or(0);
         if self.position.is_nan() || self.position as usize >= times.len() {
@@ -934,10 +942,14 @@ impl Worker {
         let (base, labels_layer) = self.map_layers();
         let no_key = self.config.carto_key.is_none()
             && matches!(self.config.basemap, Basemap::CartoDark | Basemap::CartoVoyager);
-        if no_key {
+        if no_key && !self.key_banner {
+            self.key_banner = true;
             self.emit(Event::Notice(Notice::MissingKey {
                 service: "CARTO".into(),
             }));
+        } else if !no_key && !self.layer_failed && self.key_banner {
+            self.key_banner = false;
+            self.emit(Event::Notice(Notice::MapReady));
         }
         let own = base.is_none();
         if let Some(layer) = &base {
@@ -945,11 +957,14 @@ impl Worker {
                 self.request(layer, z, x, y, true);
             }
         }
-        self.emit(Event::Base(Picture {
-            width: view.width,
-            height: view.height,
-            rgba: Arc::new(rgba),
-        }));
+        self.emit(Event::Base(
+            Picture {
+                width: view.width,
+                height: view.height,
+                rgba: Arc::new(rgba),
+            },
+            view,
+        ));
         self.emit(Event::Cities(if own { labels::visible(&view) } else { Vec::new() }));
         let labels_picture = labels_layer.map(|layer| {
             let mut rgba = vec![0u8; (view.width * view.height * 4) as usize];
@@ -979,8 +994,8 @@ impl Worker {
         }
         let view = self.view;
         let rgba = match self.kind() {
-            Kind::Dwd => self.rain_dwd(),
-            Kind::RainViewer => self.rain_rv(),
+            Provider::Dwd => self.rain_dwd(),
+            Provider::RainViewer => self.rain_rv(),
         };
         self.emit(Event::Rain(Picture {
             width: view.width,

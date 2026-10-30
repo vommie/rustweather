@@ -6,8 +6,9 @@ use serde::{Deserialize, Serialize};
 #[serde(default)]
 pub struct UiState {
     pub page: i32,
-    pub window_width: f32,
-    pub window_height: f32,
+    pub main_window: Option<WindowState>,
+    pub settings_window: Option<WindowState>,
+    pub mini_window: Option<WindowState>,
     pub view_lon: f64,
     pub view_lat: f64,
     pub view_zoom: f64,
@@ -25,8 +26,9 @@ impl Default for UiState {
     fn default() -> Self {
         Self {
             page: 0,
-            window_width: 1100.0,
-            window_height: 760.0,
+            main_window: None,
+            settings_window: None,
+            mini_window: None,
             view_lon: 10.45,
             view_lat: 51.2,
             view_zoom: 5.6,
@@ -52,6 +54,16 @@ impl Default for UiState {
             tray_position: None,
         }
     }
+}
+
+/// Where a window was. Position and size are those of its last windowed state, so un-maximizing after a restart works.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct WindowState {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+    pub maximized: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

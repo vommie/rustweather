@@ -53,6 +53,32 @@ impl View {
         )
     }
 
+    /// What the view shows, plus `margin` of its own size on every side.
+    pub fn extent(&self, margin: f64) -> Extent {
+        let (cx, cy) = to_unit(self.lon, self.lat);
+        let s = self.scale();
+        let (w, h) = (f64::from(self.width) / s, f64::from(self.height) / s);
+        let (dx, dy) = (w * (0.5 + margin), h * (0.5 + margin));
+        Extent {
+            x0: cx - dx,
+            y0: (cy - dy).max(0.01),
+            x1: cx + dx,
+            y1: (cy + dy).min(0.99),
+        }
+    }
+
+    /// Where an extent lies in this view, in pixels: left, top, width, height. A picture drawn there stays on its place on the map.
+    pub fn rect_of(&self, extent: &Extent) -> (f64, f64, f64, f64) {
+        let (cx, cy) = to_unit(self.lon, self.lat);
+        let s = self.scale();
+        (
+            (extent.x0 - cx) * s + f64::from(self.width) / 2.0,
+            (extent.y0 - cy) * s + f64::from(self.height) / 2.0,
+            (extent.x1 - extent.x0) * s,
+            (extent.y1 - extent.y0) * s,
+        )
+    }
+
     /// Moves the map by a drag of `dx`, `dy` pixels.
     pub fn panned(self, dx: f64, dy: f64) -> Self {
         let (cx, cy) = to_unit(self.lon, self.lat);
@@ -68,6 +94,30 @@ impl View {
         let moved = Self { zoom, ..self };
         let (x, y) = moved.pixel_of(lon, lat);
         moved.panned(px - x, py - y)
+    }
+}
+
+/// A stretch of the map in the unit square, for pictures that belong to a place on the map and not to the window.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Extent {
+    pub x0: f64,
+    pub y0: f64,
+    pub x1: f64,
+    pub y1: f64,
+}
+
+impl Extent {
+    /// True when `other` lies inside.
+    pub fn contains(&self, other: &Self) -> bool {
+        other.x0 >= self.x0 && other.y0 >= self.y0 && other.x1 <= self.x1 && other.y1 <= self.y1
+    }
+
+    /// `minx,miny,maxx,maxy` in Web Mercator meters.
+    pub fn bbox_3857(&self) -> String {
+        let half = 6_378_137.0 * PI;
+        let (x0, x1) = ((self.x0 * 2.0 - 1.0) * half, (self.x1 * 2.0 - 1.0) * half);
+        let (y0, y1) = ((1.0 - self.y1 * 2.0) * half, (1.0 - self.y0 * 2.0) * half);
+        format!("{x0},{y0},{x1},{y1}")
     }
 }
 
@@ -102,6 +152,27 @@ mod tests {
         let before = v.lonlat_of(200.0, 100.0);
         let after = v.zoomed(1.5, 200.0, 100.0).lonlat_of(200.0, 100.0);
         assert!((before.0 - after.0).abs() < 1e-6 && (before.1 - after.1).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_picture_stays_on_its_place_when_the_map_moves() {
+        let v = view();
+        let extent = v.extent(0.5);
+        let (x, y, w, h) = v.rect_of(&extent);
+        assert!((x + 400.0).abs() < 1e-6 && (y + 300.0).abs() < 1e-6);
+        assert!((w - 1600.0).abs() < 1e-6 && (h - 1200.0).abs() < 1e-6);
+        let (px, py, ..) = v.panned(30.0, -20.0).rect_of(&extent);
+        assert!((px - x - 30.0).abs() < 1e-6 && (py - y + 20.0).abs() < 1e-6);
+        let (_, _, zw, _) = v.zoomed(1.0, 400.0, 300.0).rect_of(&extent);
+        assert!((zw - 3200.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_margin_covers_short_pans() {
+        let v = view();
+        let wide = v.extent(0.5);
+        assert!(wide.contains(&v.panned(200.0, 100.0).extent(0.0)));
+        assert!(!wide.contains(&v.panned(600.0, 0.0).extent(0.0)));
     }
 
     #[test]

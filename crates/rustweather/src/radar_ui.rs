@@ -3,15 +3,16 @@
 use std::time::{Duration, Instant};
 
 use chrono::Local;
-use rustweather_core::map::View;
+use rustweather_core::map::{Extent, View};
 use rustweather_core::radar::FrameState;
 use rustweather_core::radar::engine::{Command, Event, Notice, Picture};
+use rustweather_core::radar::layers::Kind;
 use rustweather_core::ui_state::SavedView;
 use slint::winit_030::WinitWindowAccessor as _;
 use slint::{ComponentHandle as _, Image, ModelRc, Rgba8Pixel, SharedPixelBuffer, VecModel};
 
 use crate::app::App;
-use crate::{CityLabel, FrameCell, ViewChip};
+use crate::{CityLabel, FrameCell, LayerRect, ViewChip};
 
 fn image(picture: &Picture) -> Image {
     Image::from_rgba8(SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(
@@ -31,16 +32,54 @@ fn cell(state: FrameState, forecast: bool) -> FrameCell {
     FrameCell { state, forecast }
 }
 
+/// Puts the picture layers on their places on the map: the graphics card moves and scales them, so they follow every frame.
+fn place_layers(app: &App) {
+    let view = app.shown_view.get();
+    let scale = app.main.window().scale_factor();
+    let rect = |extent: Option<Extent>| {
+        extent.map_or(LayerRect::default(), |e| {
+            let (x, y, width, height) = view.rect_of(&e);
+            LayerRect {
+                x: x as f32 / scale,
+                y: y as f32 / scale,
+                width: width as f32 / scale,
+                height: height as f32 / scale,
+            }
+        })
+    };
+    let extents = app.layer_extents.borrow();
+    app.main.set_clouds_rect(rect(extents[Kind::Clouds.index()]));
+    app.main.set_warnings_rect(rect(extents[Kind::Warnings.index()]));
+    app.main.set_lightning_rect(rect(extents[Kind::Lightning.index()]));
+}
+
 pub fn on_event(app: &App, event: Event) {
     let w = &app.main;
     match event {
-        Event::Base(p) => {
+        Event::Base(p, view) => {
             let img = image(&p);
             w.set_base(img.clone());
             app.mini.set_base(img.clone());
             app.flyout.set_map(img);
+            app.shown_view.set(view);
+            place_layers(app);
         }
-        Event::Overlay(p) => w.set_overlay(p.as_ref().map_or_else(Image::default, image)),
+        Event::Layer { kind, picture, time } => {
+            let source = picture.as_ref().map_or_else(Image::default, |(p, _)| image(p));
+            app.layer_extents.borrow_mut()[kind.index()] = picture.map(|(_, extent)| extent);
+            match kind {
+                Kind::Clouds => {
+                    w.set_clouds(source);
+                    let label = time.map_or("Clouds".to_owned(), |t| {
+                        format!("Clouds {}", t.with_timezone(&Local).format("%H:%M"))
+                    });
+                    w.set_clouds_label(label.into());
+                }
+                Kind::Warnings => w.set_warnings(source),
+                Kind::Lightning => w.set_lightning(source),
+            }
+            place_layers(app);
+        }
         Event::Rain(p) => {
             let img = image(&p);
             w.set_rain(img.clone());
@@ -49,16 +88,6 @@ pub fn on_event(app: &App, event: Event) {
         }
         Event::Labels(p) => w.set_labels(p.as_ref().map_or_else(Image::default, image)),
         Event::Wind(p) => w.set_wind(p.as_ref().map_or_else(Image::default, image)),
-        Event::Clouds(found) => match found {
-            Some((p, time)) => {
-                w.set_clouds(image(&p));
-                w.set_clouds_label(format!("Clouds {}", time.with_timezone(&Local).format("%H:%M")).into());
-            }
-            None => {
-                w.set_clouds(Image::default());
-                w.set_clouds_label("Clouds".into());
-            }
-        },
         Event::Cities(list) => {
             let scale = w.window().scale_factor();
             let cities: Vec<CityLabel> = list
@@ -170,6 +199,11 @@ fn on_notice(app: &App, notice: Notice) {
                 "Settings",
             );
             app.toast(&format!("The {service} key was rejected."), 3);
+        }
+        Notice::MapReady => {
+            if app.main.get_banner_action() == "Settings" {
+                set_banner(app, "", false, "");
+            }
         }
         Notice::MissingKey { service } => {
             set_banner(
@@ -299,43 +333,44 @@ fn show_layers(app: &App) {
     app.main.set_layer_wind(ui.layer_wind);
 }
 
-/// Places the small panel above the icon, inside the screen. Wayland decides by itself where it goes.
-pub fn place_flyout(app: &App, x: i32, y: i32) {
-    let size = app.flyout.window().size();
-    let (w, h) = (
-        i32::try_from(size.width).unwrap_or(320),
-        i32::try_from(size.height).unwrap_or(372),
-    );
-    let monitor = app
-        .main
-        .window()
-        .with_winit_window(|win| {
-            win.available_monitors()
-                .find(|m| {
+/// Where the small panel belongs: above the icon, inside the screen. Wayland decides by itself where it goes.
+pub fn flyout_position(app: &App, x: i32, y: i32) -> slint::PhysicalPosition {
+    const WIDTH: i32 = 320;
+    const HEIGHT: i32 = 372;
+    let scale = app.flyout.window().scale_factor();
+    let (w, h) = ((WIDTH as f32 * scale) as i32, (HEIGHT as f32 * scale) as i32);
+    let monitor = |window: &slint::Window| {
+        window
+            .with_winit_window(|win| {
+                let hit = win.available_monitors().find(|m| {
                     let (p, s) = (m.position(), m.size());
                     x >= p.x
                         && y >= p.y
                         && x < p.x + i32::try_from(s.width).unwrap_or(0)
                         && y < p.y + i32::try_from(s.height).unwrap_or(0)
+                });
+                hit.map(|m| {
+                    let (p, s) = (m.position(), m.size());
+                    (
+                        p.x,
+                        p.y,
+                        p.x + i32::try_from(s.width).unwrap_or(0),
+                        p.y + i32::try_from(s.height).unwrap_or(0),
+                    )
                 })
-                .or_else(|| win.primary_monitor())
-        })
-        .flatten();
-    let (left, top, right, bottom) = monitor.map_or((0, 0, 1920, 1080), |m| {
-        let (p, s) = (m.position(), m.size());
-        (
-            p.x,
-            p.y,
-            p.x + i32::try_from(s.width).unwrap_or(1920),
-            p.y + i32::try_from(s.height).unwrap_or(1080),
-        )
-    });
-    let px = (x - w / 2).clamp(left + 8, (right - w - 8).max(left + 8));
-    let py = if y > (top + bottom) / 2 { y - h - 16 } else { y + 16 };
-    app.flyout.window().set_position(slint::PhysicalPosition::new(
-        px,
-        py.clamp(top + 8, (bottom - h - 8).max(top + 8)),
-    ));
+            })
+            .flatten()
+    };
+    let screen = monitor(app.flyout.window()).or_else(|| monitor(app.main.window()));
+    let above = |top: i32, bottom: i32| if y > (top + bottom) / 2 { y - h - 16 } else { y + 16 };
+    match screen {
+        Some((left, top, right, bottom)) => slint::PhysicalPosition::new(
+            (x - w / 2).clamp(left + 8, (right - w - 8).max(left + 8)),
+            above(top, bottom).clamp(top + 8, (bottom - h - 8).max(top + 8)),
+        ),
+        // No window is open yet to ask about the screens: right above the icon is close enough.
+        None => slint::PhysicalPosition::new((x - w / 2).max(0), (y - h - 16).max(0)),
+    }
 }
 
 pub fn wire(app: &std::rc::Rc<App>) {
@@ -473,7 +508,7 @@ pub fn wire(app: &std::rc::Rc<App>) {
         app.main.window().set_fullscreen(full);
     });
     on!(on_mini, |app| {
-        let _ = app.mini.show();
+        app.open_mini();
         let _ = app.main.hide();
         app.update_radar_activity();
     });

@@ -1,0 +1,318 @@
+// The page "Now": the weather at a glance, then the details, each explained by its tooltip.
+
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
+import { Icon, TipArea, Weather } from "controls.slint";
+import { NowData } from "types.slint";
+
+component Metric inherits Rectangle {
+    in property <image> icon;
+    in property <color> tint: Theme.primary;
+    in property <string> label;
+    in property <string> value;
+    in property <string> detail;
+    in property <string> tip;
+    in property <float> share: -1;
+    in property <color> share-color: root.tint;
+    background: Theme.surface;
+    border-width: 1px;
+    border-color: area.has-hover ? Theme.surface-selected : Theme.border;
+    border-radius: 8px;
+    min-height: 104px;
+    VerticalLayout {
+        padding: 12px;
+        spacing: 4px;
+        HorizontalLayout {
+            spacing: 7px;
+            Icon { source: root.icon; tint: root.tint; width: 18px; height: 18px; }
+            Text { text: root.label; color: Theme.text-muted; font-size: 12px; vertical-alignment: center; }
+        }
+        Text { text: root.value; color: Theme.text; font-size: 22px; font-weight: 700; overflow: elide; }
+        if root.share >= 0: Rectangle {
+            height: 4px;
+            border-radius: 2px;
+            background: Theme.surface-hover;
+            Rectangle {
+                x: 0;
+                width: parent.width * root.share;
+                border-radius: 2px;
+                background: root.share-color;
+            }
+        }
+        Text { text: root.detail; color: Theme.text-muted; font-size: 11px; overflow: elide; }
+        Rectangle { vertical-stretch: 1; }
+    }
+    area := TipArea { tip: root.tip; }
+}
+
+component SunCard inherits Rectangle {
+    in property <NowData> now;
+    background: Theme.surface;
+    border-width: 1px;
+    border-color: area.has-hover ? Theme.surface-selected : Theme.border;
+    border-radius: 8px;
+    min-height: 112px;
+    HorizontalLayout {
+        padding: 12px;
+        spacing: 16px;
+        VerticalLayout {
+            alignment: center;
+            spacing: 2px;
+            HorizontalLayout {
+                spacing: 7px;
+                Icon { source: Icons.sunrise; tint: Theme.accent; width: 20px; height: 20px; }
+                Text { text: root.now.sunrise; color: Theme.text; font-size: 18px; font-weight: 700; }
+            }
+            Text { text: "Sunrise"; color: Theme.text-muted; font-size: 11px; }
+        }
+        Rectangle {
+            horizontal-stretch: 1;
+            Path {
+                width: 100%;
+                height: parent.height - 18px;
+                y: 0;
+                commands: "M 0 100 A 100 100 0 0 1 200 100";
+                viewbox-x: 0;
+                viewbox-y: 0;
+                viewbox-width: 200;
+                viewbox-height: 100;
+                stroke: Theme.surface-selected;
+                stroke-width: 2px;
+            }
+            if root.now.sun-up: Rectangle {
+                // On the bow: half a turn from the left end to the right end.
+                x: parent.width / 2 * (1 - cos(180deg * root.now.sun-share)) - 7px;
+                y: (parent.height - 18px) * (1 - sin(180deg * root.now.sun-share)) - 7px;
+                width: 14px;
+                height: 14px;
+                border-radius: 7px;
+                background: Theme.accent;
+            }
+            Text {
+                y: parent.height - 16px;
+                width: 100%;
+                text: root.now.daylight;
+                color: Theme.text-muted;
+                font-size: 11px;
+                horizontal-alignment: center;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            spacing: 2px;
+            HorizontalLayout {
+                spacing: 7px;
+                Icon { source: Icons.sunset; tint: Theme.warn; width: 20px; height: 20px; }
+                Text { text: root.now.sunset; color: Theme.text; font-size: 18px; font-weight: 700; }
+            }
+            Text { text: "Sunset"; color: Theme.text-muted; font-size: 11px; horizontal-alignment: right; }
+        }
+    }
+    area := TipArea { tip: "The dot shows where the sun is on its way across the sky today."; }
+}
+
+component MoonCard inherits Rectangle {
+    in property <NowData> now;
+    property <length> disc: 48px;
+    background: Theme.surface;
+    border-width: 1px;
+    border-color: area.has-hover ? Theme.surface-selected : Theme.border;
+    border-radius: 8px;
+    HorizontalLayout {
+        padding: 12px;
+        spacing: 12px;
+        Rectangle {
+            width: root.disc;
+            Rectangle {
+                y: (parent.height - self.height) / 2;
+                width: root.disc;
+                height: root.disc;
+                border-radius: root.disc / 2;
+                background: Theme.surface-hover;
+                clip: true;
+                // The lit side, pushed off the disc by the moon's place in its cycle.
+                Rectangle {
+                    x: root.disc * (1 - 2 * root.now.moon-share);
+                    width: root.disc;
+                    height: root.disc;
+                    border-radius: root.disc / 2;
+                    background: Theme.accent;
+                }
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            spacing: 2px;
+            Text { text: root.now.moon; color: Theme.text; font-size: 14px; font-weight: 700; wrap: word-wrap; }
+            Text { text: root.now.moon-lit; color: Theme.text-muted; font-size: 11px; }
+        }
+    }
+    area := TipArea { tip: "The moon's phase tonight, and how much of it is lit."; }
+}
+
+component HistoryCard inherits Rectangle {
+    in property <NowData> now;
+    background: Theme.surface;
+    border-width: 1px;
+    border-color: Theme.border;
+    border-radius: 8px;
+    VerticalLayout {
+        padding: 12px;
+        spacing: 6px;
+        HorizontalLayout {
+            spacing: 7px;
+            Icon { source: Icons.temperature; tint: Theme.primary; width: 18px; height: 18px; }
+            Text { text: "Temperature, last 24 hours"; color: Theme.text-muted; font-size: 12px; vertical-alignment: center; }
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            height: 110px;
+            VerticalLayout {
+                width: 44px;
+                Text { text: root.now.history-high; color: Theme.text-muted; font-size: 11px; horizontal-alignment: right; }
+                Rectangle { vertical-stretch: 1; }
+                Text { text: root.now.history-low; color: Theme.text-muted; font-size: 11px; horizontal-alignment: right; }
+            }
+            Rectangle {
+                horizontal-stretch: 1;
+                Path {
+                    width: 100%;
+                    height: 100%;
+                    commands: root.now.history-fill;
+                    fill: Theme.primary.with-alpha(0.14);
+                    viewbox-x: 0;
+                    viewbox-y: 0;
+                    viewbox-width: 1000;
+                    viewbox-height: 100;
+                }
+                Path {
+                    width: 100%;
+                    height: 100%;
+                    commands: root.now.history-path;
+                    stroke: Theme.primary;
+                    stroke-width: 2px;
+                    viewbox-x: 0;
+                    viewbox-y: 0;
+                    viewbox-width: 1000;
+                    viewbox-height: 100;
+                }
+                TipArea { tip: "How the temperature went since this time yesterday. The numbers on the left are the lowest and highest value."; }
+            }
+        }
+        HorizontalLayout {
+            padding-left: 52px;
+            Text { text: "24 hours ago"; color: Theme.text-muted; font-size: 11px; }
+            Text { text: "12 hours ago"; color: Theme.text-muted; font-size: 11px; horizontal-alignment: center; horizontal-stretch: 1; }
+            Text { text: "Now"; color: Theme.text-muted; font-size: 11px; }
+        }
+    }
+}
+
+export component NowPage inherits ScrollView {
+    in property <NowData> now;
+    VerticalLayout {
+        padding: 14px;
+        spacing: 10px;
+        alignment: start;
+        // The hero, in the color of the temperature, like the tray icon.
+        Rectangle {
+            height: 128px;
+            border-radius: 12px;
+            background: root.now.tile;
+            HorizontalLayout {
+                padding: 18px;
+                spacing: 20px;
+                Icon { source: Weather.icon(root.now.weather); tint: #ffffff; width: 84px; height: 84px; y: (parent.height - self.height) / 2; }
+                VerticalLayout {
+                    alignment: center;
+                    Text { text: root.now.temperature; color: #ffffff; font-size: 44px; font-weight: 800; }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 1;
+                    spacing: 2px;
+                    Text { text: root.now.condition; color: #ffffff; font-size: 20px; font-weight: 700; overflow: elide; }
+                    Text { text: "Feels like " + root.now.feels; color: #ffffffdd; font-size: 13px; }
+                    Text { text: root.now.range; color: #ffffffdd; font-size: 13px; }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 2px;
+                    Text { text: root.now.place; color: #ffffff; font-size: 13px; font-weight: 700; horizontal-alignment: right; overflow: elide; }
+                    Text { text: root.now.station; color: #ffffffcc; font-size: 11px; horizontal-alignment: right; overflow: elide; }
+                    Text { text: root.now.measured; color: #ffffffcc; font-size: 11px; horizontal-alignment: right; }
+                }
+            }
+        }
+        if root.now.rain-line != "": Rectangle {
+            height: 34px;
+            border-radius: 8px;
+            background: Theme.surface.mix(Theme.primary, 0.82);
+            HorizontalLayout {
+                padding-left: 12px;
+                spacing: 8px;
+                Icon { source: Icons.umbrella; tint: Theme.primary; y: 8px; width: 18px; height: 18px; }
+                Text { text: root.now.rain-line; color: Theme.text; font-weight: 600; vertical-alignment: center; }
+            }
+        }
+        GridLayout {
+            spacing: 10px;
+            Row {
+                Metric {
+                    icon: Icons.wind; label: "Wind"; value: root.now.wind; detail: root.now.gust;
+                    tip: "Wind speed over the last ten minutes, its strongest gust, and where it comes from.";
+                    // The arrow points where the wind blows to.
+                    Icon {
+                        x: parent.width - 34px;
+                        y: 12px;
+                        source: Icons.navigation;
+                        tint: Theme.primary;
+                        width: 22px;
+                        height: 22px;
+                        transform-rotation: root.now.wind-to * 1deg;
+                    }
+                }
+                Metric {
+                    icon: Icons.droplet; label: "Humidity"; value: root.now.humidity; detail: "Dew point " + root.now.dew;
+                    share: root.now.humidity-share;
+                    tip: "How much water the air holds. At the dew point it would turn into fog or dew.";
+                }
+                Metric {
+                    icon: Icons.gauge; label: "Pressure"; value: root.now.pressure; detail: "At sea level";
+                    tip: "Air pressure at sea level. Above about 1020 hPa the weather tends to be settled.";
+                }
+                Metric {
+                    icon: Icons.eye; label: "Visibility"; value: root.now.visibility; detail: root.now.clouds;
+                    tip: "How far you can see, and how much of the sky is covered by clouds.";
+                }
+            }
+            Row {
+                Metric {
+                    icon: Icons.umbrella; label: "Rain, last hour"; value: root.now.precipitation; detail: root.now.rain-line == "" ? "None expected soon" : "See above";
+                    tip: "Rain measured at the station in the last hour.";
+                }
+                Metric {
+                    icon: Icons.sun; tint: Theme.accent; label: "UV index"; value: root.now.uv; detail: root.now.uv-word;
+                    share: root.now.uv-share;
+                    tip: "Strength of the sun's radiation. From 3 on, sun protection is a good idea.";
+                }
+                Metric {
+                    icon: Icons.leaf; tint: root.now.air-color; label: "Air quality"; value: root.now.air; detail: root.now.air-detail;
+                    share: min(1, root.now.air.to-float() / 100);
+                    share-color: root.now.air-color;
+                    tip: "European Air Quality Index: 0 to 20 is good, above 60 is poor. Lower is better.";
+                }
+                Metric {
+                    icon: Icons.flower; tint: Theme.forecast; label: "Pollen"; value: root.now.pollen; detail: root.now.pollen-detail;
+                    tip: "Which pollen is in the air at your place right now.";
+                }
+            }
+            Row {
+                SunCard { now: root.now; colspan: 3; }
+                MoonCard { now: root.now; col: 3; }
+            }
+        }
+        HistoryCard { now: root.now; }
+    }
+}
