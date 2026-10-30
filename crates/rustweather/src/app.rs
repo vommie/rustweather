@@ -355,7 +355,13 @@ impl App {
         match event {
             TrayEvent::Clicked(x, y) => {
                 self.ui.borrow_mut().tray_position = Some((x, y));
+                let _ = self.flyout.hide();
+                self.open_main(Some(2));
                 self.save_ui();
+            }
+            // Without the hover card, as under Wayland, this is the way to the card.
+            TrayEvent::OpenCard => {
+                let (x, y) = self.ui.borrow().tray_position.unwrap_or((0, 0));
                 self.toggle_flyout(x, y);
             }
             TrayEvent::MiddleClicked | TrayEvent::OpenRadar => self.open_main(Some(2)),
