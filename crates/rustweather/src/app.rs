@@ -615,7 +615,10 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
 
     app.screen_timer
         .start(slint::TimerMode::Repeated, Duration::from_secs(1), || {
-            with_app(|app| app.update_radar_activity());
+            with_app(|app| {
+                app.update_radar_activity();
+                crate::traffic_ui::show_problems(app);
+            });
         });
 
     // Behind a locked screen or a fullscreen program nothing is fetched; the app catches up when the user is back.

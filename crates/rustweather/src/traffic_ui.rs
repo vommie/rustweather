@@ -78,7 +78,36 @@ fn show(app: &App) {
     }
 }
 
+/// Tells the main window which services do not answer as they should.
+pub fn show_problems(app: &App) {
+    let mut lines: Vec<String> = app
+        .http
+        .traffic()
+        .troubles()
+        .iter()
+        .map(|(host, outcome)| {
+            let what = match outcome.as_str() {
+                "429" => "limit reached".to_owned(),
+                "timeout" => "not answering".to_owned(),
+                "offline" => "no connection".to_owned(),
+                "key" => "key rejected".to_owned(),
+                other => format!("error {other}"),
+            };
+            format!("{}: {what}", traffic::provider(host))
+        })
+        .collect();
+    lines.sort();
+    lines.dedup();
+    app.main.set_net_problem(lines.join(" · ").into());
+}
+
 pub fn wire(app: &Rc<App>) {
+    let weak = Rc::downgrade(app);
+    app.main.on_open_network(move || {
+        if let Some(app) = weak.upgrade() {
+            app.open_settings(Some(PAGE));
+        }
+    });
     let weak = Rc::downgrade(app);
     app.settings_window.on_traffic_reset(move || {
         if let Some(app) = weak.upgrade() {

@@ -16,6 +16,7 @@ use crate::store;
 /// How many requests the list keeps.
 const RECENT: usize = 200;
 const SAVE_EVERY: Duration = Duration::from_secs(60);
+const TROUBLE_LASTS: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Debug, Clone)]
 pub struct Entry {
@@ -58,6 +59,8 @@ struct Counters {
     millis: u64,
     running: u64,
     minute: VecDeque<Instant>,
+    /// The last request failed: how, and when.
+    trouble: Option<(String, Instant)>,
 }
 
 /// The day's counts survive a restart, because that is how the services count.
@@ -121,6 +124,14 @@ fn describe(url: &str) -> String {
     }
 }
 
+/// What a request costs at the service: Open-Meteo counts every place of a request.
+fn calls(url: &str) -> u64 {
+    url.split_once("latitude=").map_or(1, |(_, rest)| {
+        let places = rest.split('&').next().unwrap_or_default();
+        places.matches(',').count() as u64 + 1
+    })
+}
+
 fn outcome_of<T>(result: &Result<T>) -> String {
     match result {
         Ok(_) => "200".to_owned(),
@@ -170,13 +181,14 @@ impl Traffic {
             let mut inner = self.inner.lock();
             inner.roll_day();
             let today = inner.today.hosts.entry(entry.host.clone()).or_default();
-            today.0 += 1;
+            today.0 += calls(url);
             today.1 += bytes;
             let counters = inner.hosts.entry(entry.host.clone()).or_default();
             counters.requests += 1;
             counters.failed += u64::from(entry.failed);
             counters.bytes += bytes;
             counters.millis += millis;
+            counters.trouble = entry.failed.then(|| (entry.outcome.clone(), Instant::now()));
             counters.minute.push_back(flight.started);
             inner.recent.push_front(entry);
             inner.recent.truncate(RECENT);
@@ -239,6 +251,19 @@ impl Traffic {
             hosts: list,
             recent: recent.iter().cloned().collect(),
         }
+    }
+
+    /// The servers whose last request failed a short while ago, and how. A server that answers again drops out by itself.
+    pub fn troubles(&self) -> Vec<(String, String)> {
+        self.inner
+            .lock()
+            .hosts
+            .iter()
+            .filter_map(|(host, counters)| {
+                let (outcome, at) = counters.trouble.as_ref()?;
+                (at.elapsed() < TROUBLE_LASTS).then(|| (host.clone(), outcome.clone()))
+            })
+            .collect()
     }
 
     /// Starts the list and the session's statistics over; the day's counts stay, the services go on counting too.
@@ -330,6 +355,26 @@ mod tests {
         assert_eq!((stats.requests, stats.failed, stats.bytes), (2, 1, 100));
         assert_eq!((stats.today, stats.last_minute, stats.running), (2, 2, 0));
         assert_eq!(traffic.snapshot().recent[0].outcome, "timeout");
+    }
+
+    #[test]
+    fn every_place_of_a_request_counts() {
+        assert_eq!(calls("https://x.example/a?latitude=1,2,3&longitude=4,5,6"), 3);
+        assert_eq!(calls("https://x.example/a?latitude=1&longitude=4"), 1);
+        assert_eq!(calls("https://x.example/tile.png"), 1);
+    }
+
+    #[test]
+    fn a_failing_server_shows_until_it_answers_again() {
+        let traffic = Traffic::default();
+        let limited = Err(Error::RateLimited {
+            host: "a.example".into(),
+            retry_after_secs: None,
+        });
+        done(&traffic, "https://a.example/x", "a.example", &limited, 0);
+        assert_eq!(traffic.troubles(), [("a.example".to_owned(), "429".to_owned())]);
+        done(&traffic, "https://a.example/x", "a.example", &Ok(()), 1);
+        assert!(traffic.troubles().is_empty());
     }
 
     #[test]

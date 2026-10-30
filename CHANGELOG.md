@@ -5,6 +5,21 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- The status line names a service that does not answer as it should, like a reached limit, and leads to the Network page.
+
+### Changed
+
+- The Network page counts every place of a request toward today, as Open-Meteo does.
+
+### Fixed
+
+- City temperatures and the heatmap come from one DWD model grid, fetched once an hour, for the whole world. Asking Open-Meteo for each
+  point used up its daily limit, which froze the map and also took the forecast away for the day. Labels and colors now follow every pan
+  and zoom at once.
+- A failed temperature load shows a banner instead of staying silent.
+
 ## [0.1.4] - 2026-10-30
 
 ### Added

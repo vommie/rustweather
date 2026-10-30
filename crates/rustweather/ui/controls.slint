@@ -361,6 +361,9 @@ export component Tile inherits Rectangle {
 export component StatusLine inherits Rectangle {
     in property <string> text;
     in property <int> level;
+    /// A service that does not answer as it should.
+    in property <string> problem;
+    callback open-problem();
     height: 26px;
     background: Theme.surface;
     Rectangle { y: 0; height: 1px; background: Theme.border; }
@@ -379,7 +382,23 @@ export component StatusLine inherits Rectangle {
                 opacity: root.level == 4 ? (0.55 + 0.45 * sin(animation-tick() / 1s * 360deg * 1.5)) : 1;
             }
         }
-        Text { text: root.text; color: Theme.text-muted; font-size: 12px; vertical-alignment: center; overflow: elide; }
+        Text { horizontal-stretch: 1; text: root.text; color: Theme.text-muted; font-size: 12px; vertical-alignment: center; overflow: elide; }
+        if root.problem != "": Rectangle {
+            width: note.preferred-width;
+            note := HorizontalLayout {
+                spacing: 5px;
+                Icon { source: Icons.alert-triangle; tint: Theme.warn; width: 14px; height: 14px; y: 6px; }
+                Text { text: root.problem; color: Theme.warn; font-size: 12px; vertical-alignment: center; }
+            }
+            TipArea {
+                tip: "See every request on the Network page";
+                mouse-cursor: pointer;
+                clicked => {
+                    Tips.show = false;
+                    root.open-problem();
+                }
+            }
+        }
     }
 }
 
