@@ -194,4 +194,5 @@ def main():
         print(key, label, "bbox on 48 grid:", [round(v / 10, 1) for v in box])
 
 
-main()
+if __name__ == "__main__":
+    main()
