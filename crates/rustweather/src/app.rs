@@ -71,6 +71,9 @@ pub struct App {
     pub heat_extent: Cell<Option<rustweather_core::map::Extent>>,
     /// The screen is locked; a fullscreen window has the focus.
     pub outside: Cell<(bool, bool)>,
+    quiet: Cell<bool>,
+    /// A minimized window sends no signal here, so this looks.
+    screen_timer: slint::Timer,
     pub presence: watch::Sender<Presence>,
     pub map_thumbs: RefCell<Vec<slint::Image>>,
 }
@@ -178,7 +181,9 @@ impl App {
         };
         self.presence
             .send_if_modified(|old| std::mem::replace(old, presence) != presence);
-        self.radar.send(Command::Away(quiet));
+        if self.quiet.replace(quiet) != quiet {
+            self.radar.send(Command::Away(quiet));
+        }
     }
 
     /// The radar loads only while it is on screen. A view that opens starts playing: the weather card always, the others by setting.
@@ -508,7 +513,7 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         wind_layer: ui.layer_wind,
     };
     if settings.radar.basemap.needs_key() && config.carto_key.is_none() {
-        tracing::info!("[App] No CARTO key yet, the own map stands in");
+        tracing::info!("[App] No CARTO key yet, the standard map stands in");
     }
     let setup = Setup {
         http: http.clone(),
@@ -562,6 +567,8 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         layer_extents: RefCell::new([None; 3]),
         heat_extent: Cell::new(None),
         outside: Cell::new((false, false)),
+        quiet: Cell::new(false),
+        screen_timer: slint::Timer::default(),
         presence: presence_tx,
         map_thumbs: RefCell::new(vec![
             slint::Image::default();
@@ -594,6 +601,11 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     );
     *app.control.borrow_mut() = Some(control);
     app.show_weather();
+
+    app.screen_timer
+        .start(slint::TimerMode::Repeated, Duration::from_secs(1), || {
+            with_app(|app| app.update_radar_activity());
+        });
 
     // Behind a locked screen or a fullscreen program nothing is fetched; the app catches up when the user is back.
     app.runtime.handle().spawn(async move {

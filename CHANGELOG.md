@@ -5,6 +5,18 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Every setting now explains itself in a short tooltip, shown over the whole row, instead of text under its name.
+- The map that ships with the app is now called Standard map.
+- The layer buttons on the radar show only their icon, with the explanation in the tooltip.
+
+### Fixed
+
+- The radar and the wind go on within a second when a minimized window comes back.
+- The map previews no longer wait behind slow weather layers: each appears as soon as it is complete, and "Loading…" stands in until then.
+- Maps no longer queue behind the DWD's slow map server when clouds, warnings or lightning are on.
+
 ## [0.1.3] - 2026-10-30
 
 ### Added

@@ -237,13 +237,13 @@ export component RadarPage inherits Rectangle {
         HorizontalLayout {
             spacing: 4px;
             alignment: start;
-            Chip { text: root.maps[root.map-current].name; tip: "Choose the map: satellite, topographic, OpenStreetMap and more"; icon: Icons.map; has-icon: true; checked: root.map-open; clicked => { root.map-open = !root.map-open; } }
-            Chip { text: "Warnings"; tip: "Official DWD warnings by district: the stronger, the darker. Click an area for the full text"; icon: Icons.alert-triangle; has-icon: true; checked: root.layer-alerts; clicked => { root.toggle-layer(0); } }
-            Chip { text: root.clouds-label; tip: "Satellite picture of the clouds. New pictures come every three hours; the time is the picture's"; icon: Icons.cloud; has-icon: true; checked: root.layer-clouds; clicked => { root.toggle-layer(1); } }
-            Chip { text: "Lightning"; tip: "Lightning strikes of the last hours, from the DWD"; icon: Icons.bolt; has-icon: true; checked: root.layer-lightning; clicked => { root.toggle-layer(2); } }
-            Chip { text: "Wind"; tip: "Current wind: the lines flow with it, the scale is at the bottom right"; icon: Icons.wind; has-icon: true; checked: root.layer-wind; clicked => { root.toggle-layer(3); } }
-            Chip { text: "Temperature"; tip: "Current temperature across the map: the closer you zoom in, the more places"; icon: Icons.temperature; has-icon: true; checked: root.layer-temps; clicked => { root.toggle-layer(4); } }
-            Chip { text: "Heatmap"; tip: "Current temperature as colors over the map, the scale is at the bottom right"; icon: Icons.palette; has-icon: true; checked: root.layer-heat; clicked => { root.toggle-layer(5); } }
+            Chip { tip: "Map: " + root.maps[root.map-current].name; icon: Icons.map; has-icon: true; checked: root.map-open; clicked => { root.map-open = !root.map-open; } }
+            Chip { tip: "Warnings: official DWD warnings by district, the stronger the darker. Click an area for the full text"; icon: Icons.alert-triangle; has-icon: true; checked: root.layer-alerts; clicked => { root.toggle-layer(0); } }
+            Chip { tip: root.clouds-label + ": satellite picture of the clouds, a new one comes every three hours"; icon: Icons.cloud; has-icon: true; checked: root.layer-clouds; clicked => { root.toggle-layer(1); } }
+            Chip { tip: "Lightning: strikes of the last hours, from the DWD"; icon: Icons.bolt; has-icon: true; checked: root.layer-lightning; clicked => { root.toggle-layer(2); } }
+            Chip { tip: "Wind: the lines flow with the current wind, the scale is at the bottom right"; icon: Icons.wind; has-icon: true; checked: root.layer-wind; clicked => { root.toggle-layer(3); } }
+            Chip { tip: "Temperature: current values across the map, the closer you zoom in the more places"; icon: Icons.temperature; has-icon: true; checked: root.layer-temps; clicked => { root.toggle-layer(4); } }
+            Chip { tip: "Heatmap: current temperature as colors over the map, the scale is at the bottom right"; icon: Icons.palette; has-icon: true; checked: root.layer-heat; clicked => { root.toggle-layer(5); } }
         }
     }
 
@@ -275,6 +275,7 @@ export component RadarPage inherits Rectangle {
                 clip: true;
                 background: Theme.surface-hover;
                 Image { width: 100%; height: 100%; source: m.thumb; image-fit: cover; opacity: m.needs-key ? 0.3 : 1; }
+                if m.thumb.width == 0: Text { text: "Loading…"; color: Theme.text-muted; font-size: 10px; }
             }
             Text {
                 x: 6px;
