@@ -12,11 +12,11 @@ use rustweather_core::settings::Basemap;
 use rustweather_core::sources::warnings;
 use rustweather_core::ui_state::SavedView;
 use slint::winit_030::WinitWindowAccessor as _;
-use slint::{ComponentHandle as _, Image, ModelRc, Rgba8Pixel, SharedPixelBuffer, SharedString, VecModel};
+use slint::{ComponentHandle as _, Image, ModelRc, Rgba8Pixel, SharedPixelBuffer, VecModel};
 
 use crate::app::{App, with_app};
 use crate::models;
-use crate::{CityLabel, FrameCell, LayerRect, ViewChip};
+use crate::{CityLabel, FrameCell, LayerRect, MapChoice, ViewChip};
 
 fn image(picture: &Picture) -> Image {
     Image::from_rgba8(SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(
@@ -106,6 +106,18 @@ pub fn on_event(app: &App, event: Event) {
             w.set_heat(picture.as_ref().map_or_else(Image::default, |(p, _)| image(p)));
             app.heat_extent.set(picture.map(|(_, extent)| extent));
             place_layers(app);
+        }
+        Event::MapThumb { index, picture } => {
+            use slint::Model as _;
+            let thumb = image(&picture);
+            if let Some(slot) = app.map_thumbs.borrow_mut().get_mut(index) {
+                *slot = thumb.clone();
+            }
+            let maps = w.get_maps();
+            if let Some(mut choice) = maps.row_data(index) {
+                choice.thumb = thumb;
+                maps.set_row_data(index, choice);
+            }
         }
         Event::Cities(list) => {
             let scale = w.window().scale_factor();
@@ -398,23 +410,24 @@ fn show_layers(app: &App) {
 /// The list of maps, the one in use and what its license asks to show.
 pub fn show_maps(app: &App) {
     let has_key = app.secrets.borrow().get(secrets::CARTO).is_some();
-    let names: Vec<SharedString> = Basemap::ALL
+    let thumbs = app.map_thumbs.borrow();
+    let choices: Vec<MapChoice> = Basemap::ALL
         .iter()
-        .map(|map| {
-            if map.needs_key() && !has_key {
-                format!("{} (needs a key)", map.name()).into()
-            } else {
-                map.name().into()
-            }
+        .zip(thumbs.iter())
+        .map(|(map, thumb)| MapChoice {
+            name: map.name().into(),
+            thumb: thumb.clone(),
+            needs_key: map.needs_key() && !has_key,
         })
         .collect();
+    drop(thumbs);
     let current = app.settings.borrow().radar.basemap;
     let shown = if current.needs_key() && !has_key {
         ""
     } else {
         current.credit()
     };
-    app.main.set_maps(ModelRc::new(VecModel::from(names)));
+    app.main.set_maps(ModelRc::new(VecModel::from(choices)));
     app.main
         .set_map_current(Basemap::ALL.iter().position(|m| *m == current).unwrap_or(0) as i32);
     app.main.set_map_credit(shown.into());
@@ -612,6 +625,11 @@ pub fn wire(app: &std::rc::Rc<App>) {
             app.push_radar_config();
             app.save_settings();
         }
+    });
+    on!(on_map_picker, |app, open| {
+        let place = app.settings.borrow().place();
+        app.radar
+            .send(Command::MapThumbs(open.then_some((place.lon, place.lat))));
     });
     on!(on_toggle_full, |app| {
         let full = !app.main.get_full();

@@ -1,5 +1,7 @@
 // The data the UI shows. Rust fills these (src/models.rs); nothing here is computed from weather values.
 
+export struct MapChoice { name: string, thumb: image, needs-key: bool }
+
 export struct NowData {
     has-data: bool,
     place: string,
