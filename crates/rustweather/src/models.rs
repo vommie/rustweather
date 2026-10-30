@@ -264,7 +264,13 @@ pub fn bars(snapshot: &Snapshot) -> Vec<RainBar> {
         .collect()
 }
 
-pub fn tray(snapshot: &Snapshot, settings: &Settings, background: Option<Rgb>, foreground: Option<Rgb>) -> TrayData {
+pub fn tray(
+    snapshot: &Snapshot,
+    settings: &Settings,
+    background: Option<Rgb>,
+    foreground: Option<Rgb>,
+    own_card: bool,
+) -> TrayData {
     let current = snapshot.current.as_ref();
     let temperature = current.and_then(|c| c.temperature);
     let age = current
@@ -298,7 +304,11 @@ pub fn tray(snapshot: &Snapshot, settings: &Settings, background: Option<Rgb>, f
         error: snapshot.error.as_deref(),
         next_fetch: snapshot.next_at.map(|t| t.with_timezone(&Local)),
     };
-    let (title, description) = tooltip::build(&input, &settings.tray, &settings.units);
+    let (title, description) = if own_card {
+        (String::new(), String::new())
+    } else {
+        tooltip::build(&input, &settings.tray, &settings.units)
+    };
     TrayData {
         look,
         title,

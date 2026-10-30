@@ -59,6 +59,8 @@ pub struct App {
     pub toast_timer: slint::Timer,
     pub search_results: RefCell<Vec<rustweather_core::settings::Place>>,
     pub flyout_closed_at: Cell<Instant>,
+    pub hover: RefCell<crate::hover::Hover>,
+    pub hover_timer: slint::Timer,
 }
 
 thread_local! {
@@ -171,7 +173,11 @@ impl App {
         self.main.set_eta_text(line.split_once(", ").map_or("", |p| p.1).into());
         let cfg_bg = Rgb::parse(&settings.tray.background).or(self.cli_bg);
         let cfg_fg = Rgb::parse(&settings.tray.foreground).or(self.cli_fg);
-        let _ = self.tray_tx.send(models::tray(&snapshot, &settings, cfg_bg, cfg_fg));
+        // The panel's tooltip gives way to the card only where the card can really appear.
+        let own_card = settings.tray.hover_card && crate::hover::usable() && self.ui.borrow().tray_position.is_some();
+        let _ = self
+            .tray_tx
+            .send(models::tray(&snapshot, &settings, cfg_bg, cfg_fg, own_card));
         if let Some(error) = &snapshot.error {
             self.main.set_status(error.as_str().into());
             self.main.set_status_level(2);
@@ -268,7 +274,11 @@ impl App {
     fn on_tray(&self, event: TrayEvent) {
         tracing::debug!(?event, "[Tray] Event");
         match event {
-            TrayEvent::Clicked(x, y) => self.toggle_flyout(x, y),
+            TrayEvent::Clicked(x, y) => {
+                self.ui.borrow_mut().tray_position = Some((x, y));
+                self.save_ui();
+                self.toggle_flyout(x, y);
+            }
             TrayEvent::MiddleClicked | TrayEvent::OpenRadar => self.open_main(Some(2)),
             TrayEvent::Scrolled(delta) => {
                 let (count, active) = {
@@ -468,11 +478,14 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         toast_timer: slint::Timer::default(),
         search_results: RefCell::new(Vec::new()),
         flyout_closed_at: Cell::new(Instant::now() - Duration::from_secs(5)),
+        hover: RefCell::new(crate::hover::Hover::default()),
+        hover_timer: slint::Timer::default(),
     });
     APP.with(|a| *a.borrow_mut() = Some(Rc::clone(&app)));
 
     radar_ui::wire(&app);
     settings_ui::wire(&app);
+    crate::hover::start(&app);
     app.main.set_page(app.ui.borrow().page);
 
     let control = weather::spawn(

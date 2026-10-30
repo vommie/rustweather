@@ -11,6 +11,8 @@
 - Radar from the DWD and RainViewer with free zoom, smooth motion, forecast, saved views, warning and lightning layers, and a
   small always-on-top window.
 - CARTO, OpenStreetMap and an offline map of the app's own; API keys in Settings, stored outside the program.
+- A weather card while the pointer rests on the tray icon, as an option on X11.
+- Settings > Alerts can send a test notification.
 - Desktop notifications for rain, warnings, thunderstorms, frost and heat, with quiet hours.
 - Loading indicators, a disk cache with limits, automatic retries, and a Diagnostics page.
 - Import of the old `weather_tray.json`.

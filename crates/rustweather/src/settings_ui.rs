@@ -50,6 +50,8 @@ fn data(app: &App, s: &Settings) -> SettingsData {
         station_url: s.general.station_url.as_str().into(),
         tile_bg: s.tray.background.as_str().into(),
         tile_fg: s.tray.foreground.as_str().into(),
+        hover_card: s.tray.hover_card,
+        hover_usable: crate::hover::usable(),
         show_rain: s.tray.show_rain_dot,
         show_alert: s.tray.show_alert,
         show_stale: s.tray.show_stale,
@@ -214,6 +216,7 @@ pub fn refresh_health(app: &App) {
 
 fn set_bool(s: &mut Settings, key: &str, value: bool) {
     match key {
+        "hover-card" => s.tray.hover_card = value,
         "show-rain" => s.tray.show_rain_dot = value,
         "show-alert" => s.tray.show_alert = value,
         "show-stale" => s.tray.show_stale = value,
@@ -453,6 +456,12 @@ pub fn wire(app: &Rc<App>) {
     });
     on!(on_open_log, |app| {
         app.open_log();
+    });
+    on!(on_test_notification, |app| {
+        match crate::alerts::show("Rain in 20 min", "light, about 25 min long (this is a test)") {
+            Ok(()) => app.toast("Test notification sent.", 1),
+            Err(e) => app.toast(&format!("Could not show a notification: {e}"), 3),
+        }
     });
     on!(on_install_desktop, |app| {
         let result = app.desktop.install();
