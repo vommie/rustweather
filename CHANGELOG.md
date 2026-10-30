@@ -1,6 +1,13 @@
 # Changelog
 
+All notable changes to RustWeather are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and versions follow [Semantic Versioning](https://semver.org/).
+
 ## [Unreleased]
+
+## [0.1.0] - 2026-10-30
+
+First release, replacing the `weather_tray.py` script.
 
 ### Added
 
@@ -24,6 +31,5 @@
 - Arch package with `build-package.sh`.
 - The application menu entry offers Radar and Settings as actions; a second start opens what it asks for.
 
-### Fixed
-
-- The radar no longer fetches or animates behind a locked screen; it catches up when you are back.
+[Unreleased]: https://github.com/vommie/rustweather/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/vommie/rustweather/releases/tag/v0.1.0

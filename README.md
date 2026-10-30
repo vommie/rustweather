@@ -17,7 +17,16 @@ script, for Linux with KDE Plasma.
 cargo build --release
 ```
 
-## Arch package
+## Install
+
+Packages for Arch Linux and Manjaro are on the [releases page](https://github.com/vommie/rustweather/releases).
+
+```bash
+curl -LO https://github.com/vommie/rustweather/releases/latest/download/rustweather-x86_64.pkg.tar.zst
+sudo pacman -U rustweather-x86_64.pkg.tar.zst
+```
+
+## Build the Arch package
 
 ```bash
 ./build-package.sh
