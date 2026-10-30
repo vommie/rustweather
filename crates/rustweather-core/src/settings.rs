@@ -254,6 +254,8 @@ pub struct Alerts {
     pub rain: bool,
     pub rain_end: bool,
     pub dwd: bool,
+    /// Asks for official warnings while only the tray is there, at the cost of one more request per update.
+    pub background_warnings: bool,
     pub thunderstorm: bool,
     pub frost: bool,
     pub heat: bool,
@@ -274,6 +276,7 @@ impl Default for Alerts {
             rain: true,
             rain_end: true,
             dwd: true,
+            background_warnings: false,
             thunderstorm: true,
             frost: true,
             heat: true,

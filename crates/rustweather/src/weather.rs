@@ -111,6 +111,7 @@ pub fn spawn(
     runtime.spawn(async move {
         let mut last: Option<Instant> = None;
         let mut details: Option<Instant> = None;
+        let mut warnings: Option<Instant> = None;
         let mut failures = 0u32;
         let mut settings = settings;
         let mut presence = presence;
@@ -151,9 +152,11 @@ pub fn spawn(
             )
             .await;
             let (mut forecast, mut alerts, mut series) = (None, None, None);
+            if full || current_settings.alerts.background_warnings {
+                alerts = timed(&mut health, "Warnings (DWD)", brightsky::alerts(&http, &place)).await;
+            }
             if full {
                 forecast = timed(&mut health, "Forecast (Open-Meteo)", openmeteo::forecast(&http, &place)).await;
-                alerts = timed(&mut health, "Warnings (DWD)", brightsky::alerts(&http, &place)).await;
                 series = timed(&mut health, "Rain outlook (DWD)", outlook::series(&http, &place)).await;
                 details = Some(Instant::now());
             }
@@ -170,13 +173,16 @@ pub fn spawn(
                 }
                 if let Some(value) = alerts {
                     s.alerts = value;
+                    warnings = Some(Instant::now());
                 }
                 if let Some(value) = series {
                     s.outlook = outlook::read(&value, Utc::now());
                     s.series = value;
                 }
-                if !full && details.is_none_or(|t| t.elapsed() >= DETAILS_MAX_AGE) {
+                if !full && warnings.is_none_or(|t| t.elapsed() >= DETAILS_MAX_AGE) {
                     s.alerts.clear();
+                }
+                if !full && details.is_none_or(|t| t.elapsed() >= DETAILS_MAX_AGE) {
                     s.outlook = RainOutlook::default();
                     s.series.clear();
                 }
