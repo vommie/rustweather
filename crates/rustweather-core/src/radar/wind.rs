@@ -1,13 +1,22 @@
-//! The wind layer: a coarse grid of current wind from Open-Meteo, shown as particles that flow across the map.
+//! The wind layer: wind from the DWD's model (`model.rs`), one request an hour for the whole world, shown as particles that flow across the map.
+//! Open-Meteo counts every point of a request against its daily limit, so it only steps in when the DWD fails and nothing usable is left.
 
 use std::f32::consts::PI;
+use std::path::Path;
 
+use chrono::{DateTime, TimeDelta, Utc};
 use serde::Deserialize;
+
+use super::model::Model;
 
 use crate::error::{Error, Result};
 use crate::http::Http;
 use crate::map::View;
 
+const COVERAGE: &str = "dwd__Icon_reg025_fd_sl_UV10M";
+/// A model grid from a few hours ago beats asking for many single points.
+const STILL_USABLE: TimeDelta = TimeDelta::hours(6);
+const KMH_PER_MS: f32 = 3.6;
 const COLUMNS: usize = 9;
 const ROWS: usize = 7;
 /// The picture has half the view's size: the trails are soft anyway, and it costs a quarter of the work.
@@ -34,9 +43,86 @@ fn components(speed: f32, from_degrees: f32) -> (f32, f32) {
     (speed * to.sin(), speed * to.cos())
 }
 
+/// Where the wind comes from.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Field {
+    /// The DWD's whole world: east and north in m/s.
+    Model(Model),
+    /// Open-Meteo's points around one view.
+    Patch(Patch),
+}
+
+impl Field {
+    /// East and north in km/h at a place; `None` where nothing is known.
+    #[inline]
+    pub fn at(&self, lon: f64, lat: f64) -> Option<(f32, f32)> {
+        match self {
+            Self::Model(model) => Some((
+                model.sample(0, lon, lat)? * KMH_PER_MS,
+                model.sample(1, lon, lat)? * KMH_PER_MS,
+            )),
+            Self::Patch(patch) => patch.at(lon, lat),
+        }
+    }
+
+    /// True when nothing has to be asked for.
+    pub fn enough(&self, view: &View, hour: DateTime<Utc>, fresh: bool) -> bool {
+        match self {
+            Self::Model(model) => model.hour == hour,
+            Self::Patch(patch) => fresh && patch.covers(view),
+        }
+    }
+
+    /// True while this can stay on screen even though a newer one failed, so Open-Meteo is not needed.
+    pub fn usable(&self, hour: DateTime<Utc>) -> bool {
+        matches!(self, Self::Model(model) if hour - model.hour < STILL_USABLE)
+    }
+}
+
+/// What a round of asking brought.
+#[derive(Debug, Default)]
+pub struct Loaded {
+    pub field: Option<Field>,
+    pub dwd_failed: bool,
+    pub meteo_limited: bool,
+    pub problem: Option<Error>,
+}
+
+/// The DWD first; Open-Meteo only when the DWD failed and the caller allows it.
+pub async fn load(http: &Http, file: &Path, view: &View, hour: DateTime<Utc>, dwd: bool, meteo: bool) -> Loaded {
+    let mut loaded = Loaded::default();
+    if dwd {
+        match Model::load(http, file, COVERAGE, hour).await {
+            Ok(model) => {
+                loaded.field = Some(Field::Model(model));
+                return loaded;
+            }
+            Err(error) => {
+                tracing::warn!(%error, "[Radar] Wind from the DWD failed");
+                loaded.dwd_failed = true;
+                loaded.problem = Some(error);
+            }
+        }
+    }
+    if meteo {
+        match fetch(http, view).await {
+            Ok(patch) => {
+                loaded.field = Some(Field::Patch(patch));
+                loaded.problem = None;
+            }
+            Err(error) => {
+                loaded.meteo_limited = matches!(error, Error::RateLimited { .. });
+                // The DWD is the real source: its problem is the one worth telling.
+                loaded.problem.get_or_insert(error);
+            }
+        }
+    }
+    loaded
+}
+
 /// Wind on a regular longitude/latitude grid, covering a bit more than the view it was fetched for.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Field {
+pub struct Patch {
     west: f64,
     north: f64,
     step_lon: f64,
@@ -46,7 +132,7 @@ pub struct Field {
     pub zoom: f64,
 }
 
-impl Field {
+impl Patch {
     /// True while `view` still lies inside the grid at about the same scale.
     pub fn covers(&self, view: &View) -> bool {
         let (west, north) = view.lonlat_of(0.0, 0.0);
@@ -82,7 +168,7 @@ impl Field {
 }
 
 /// Fetches the grid around a view, with a quarter of the view as a margin, so short pans need no new request.
-pub async fn fetch(http: &Http, view: &View) -> Result<Field> {
+pub async fn fetch(http: &Http, view: &View) -> Result<Patch> {
     let (west, north) = view.lonlat_of(0.0, 0.0);
     let (east, south) = view.lonlat_of(f64::from(view.width), f64::from(view.height));
     let (margin_lon, margin_lat) = ((east - west) / 4.0, (north - south) / 4.0);
@@ -116,7 +202,7 @@ pub async fn fetch(http: &Http, view: &View) -> Result<Field> {
             )
         })
         .collect();
-    Ok(Field {
+    Ok(Patch {
         west,
         north,
         step_lon,
@@ -250,8 +336,8 @@ mod tests {
         }
     }
 
-    fn uniform(east: f32, north: f32) -> Field {
-        Field {
+    fn patch(east: f32, north: f32) -> Patch {
+        Patch {
             west: 0.0,
             north: 60.0,
             step_lon: 3.0,
@@ -259,6 +345,47 @@ mod tests {
             cells: vec![(east, north); COLUMNS * ROWS],
             zoom: 6.0,
         }
+    }
+
+    fn uniform(east: f32, north: f32) -> Field {
+        Field::Patch(patch(east, north))
+    }
+
+    fn world(hour: DateTime<Utc>) -> Field {
+        let mut model = crate::radar::model::uniform(360, 181, vec![10.0; 360 * 181 * 2]);
+        model.hour = hour;
+        Field::Model(model)
+    }
+
+    #[test]
+    fn the_model_is_in_meters_per_second_and_covers_the_world() {
+        let field = world(DateTime::UNIX_EPOCH);
+        assert_eq!(field.at(10.0, 51.0), Some((36.0, 36.0)));
+        assert_eq!(field.at(-170.0, -60.0), Some((36.0, 36.0)));
+    }
+
+    #[test]
+    fn a_grid_of_this_hour_needs_nothing_wherever_the_map_goes() {
+        let hour = DateTime::UNIX_EPOCH;
+        let far = View { lon: 170.0, ..view() };
+        assert!(world(hour).enough(&far, hour, false));
+        assert!(!world(hour).enough(&far, hour + TimeDelta::hours(1), true));
+    }
+
+    #[test]
+    fn open_meteo_is_only_needed_without_a_recent_grid() {
+        let hour = DateTime::UNIX_EPOCH;
+        assert!(world(hour).usable(hour + TimeDelta::hours(5)));
+        assert!(!world(hour).usable(hour + TimeDelta::hours(7)));
+        assert!(!uniform(1.0, 1.0).usable(hour));
+    }
+
+    #[test]
+    fn open_meteo_points_last_as_long_as_they_fit_the_view() {
+        let (hour, field) = (DateTime::UNIX_EPOCH, uniform(1.0, 1.0));
+        assert!(field.enough(&view(), hour, true));
+        assert!(!field.enough(&view(), hour, false));
+        assert!(!field.enough(&View { lon: 100.0, ..view() }, hour, true));
     }
 
     #[test]
@@ -271,7 +398,7 @@ mod tests {
 
     #[test]
     fn field_interpolates_and_ends_at_its_edge() {
-        let mut f = uniform(0.0, 0.0);
+        let mut f = patch(0.0, 0.0);
         f.cells[1] = (9.0, 0.0);
         assert_eq!(f.at(1.5, 60.0), Some((4.5, 0.0)));
         assert_eq!(f.at(-1.0, 50.0), None);
