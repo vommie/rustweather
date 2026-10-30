@@ -7,6 +7,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- A left click on the tray icon always opens the radar in the main window. The weather card comes on hover and from the tray menu.
 - Wind comes from the DWD's model too, one request an hour for the whole world, so moving the map needs no new data. Open-Meteo only steps in
   when the DWD fails and no recent grid is left. The particles stay the same.
 

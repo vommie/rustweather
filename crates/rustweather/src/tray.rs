@@ -14,6 +14,7 @@ pub enum TrayEvent {
     Scrolled(i32),
     OpenWindow,
     OpenRadar,
+    OpenCard,
     FetchNow,
     SelectPlace(usize),
     TogglePause,
@@ -111,6 +112,7 @@ impl ksni::Tray for AppTray {
         vec![
             self.entry("Open RustWeather", TrayEvent::OpenWindow),
             self.entry("Radar", TrayEvent::OpenRadar),
+            self.entry("Weather card", TrayEvent::OpenCard),
             self.entry("Update now", TrayEvent::FetchNow),
             MenuItem::Separator,
             SubMenu {
