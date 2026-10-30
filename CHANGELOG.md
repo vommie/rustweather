@@ -5,6 +5,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-10-30
+
 ### Changed
 
 - A left click on the tray icon always opens the radar in the main window. The weather card comes on hover and from the tray menu.
@@ -134,7 +136,8 @@ First release, replacing the `weather_tray.py` script.
 - Arch package with `build-package.sh`.
 - The application menu entry offers Radar and Settings as actions; a second start opens what it asks for.
 
-[Unreleased]: https://github.com/vommie/rustweather/compare/v0.1.5...HEAD
+[Unreleased]: https://github.com/vommie/rustweather/compare/v0.1.6...HEAD
+[0.1.6]: https://github.com/vommie/rustweather/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/vommie/rustweather/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/vommie/rustweather/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/vommie/rustweather/compare/v0.1.2...v0.1.3
