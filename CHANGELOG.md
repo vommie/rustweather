@@ -11,6 +11,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Settings are now a page of the main window, at the bottom of the rail, instead of a window of their own.
 - The Network page counts every place of a request toward today, as Open-Meteo does.
 
 ### Fixed
