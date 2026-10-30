@@ -5,6 +5,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-30
+
 ### Changed
 
 - Clouds, warnings and lightning are cached like the map: what was seen once appears at once, also after a restart, until the data is new.
@@ -65,6 +67,7 @@ First release, replacing the `weather_tray.py` script.
 - Arch package with `build-package.sh`.
 - The application menu entry offers Radar and Settings as actions; a second start opens what it asks for.
 
-[Unreleased]: https://github.com/vommie/rustweather/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/vommie/rustweather/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/vommie/rustweather/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/vommie/rustweather/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/vommie/rustweather/releases/tag/v0.1.0
