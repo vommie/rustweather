@@ -7,19 +7,19 @@ use interprocess::local_socket::{GenericNamespaced, ListenerOptions, Stream, ToN
 
 const NAME: &str = "rustweather.instance";
 
-/// True when another instance took the message.
-pub fn signal_running() -> bool {
+/// True when another instance took the message; `page` says what it should open.
+pub fn signal_running(page: &str) -> bool {
     let Ok(name) = NAME.to_ns_name::<GenericNamespaced>() else {
         return false;
     };
     match Stream::connect(name) {
-        Ok(mut stream) => stream.write_all(b"open").is_ok(),
+        Ok(mut stream) => stream.write_all(page.as_bytes()).is_ok(),
         Err(_) => false,
     }
 }
 
-/// Listens for later starts and calls `on_open` for each.
-pub fn listen(on_open: impl Fn() + Send + 'static) {
+/// Listens for later starts and calls `on_open` with the wanted page for each.
+pub fn listen(on_open: impl Fn(String) + Send + 'static) {
     let Ok(name) = NAME.to_ns_name::<GenericNamespaced>() else {
         return;
     };
@@ -29,9 +29,9 @@ pub fn listen(on_open: impl Fn() + Send + 'static) {
     };
     let spawned = std::thread::Builder::new().name("instance".into()).spawn(move || {
         for mut stream in listener.incoming().flatten() {
-            let mut buffer = [0u8; 8];
-            let _ = stream.read(&mut buffer);
-            on_open();
+            let mut buffer = [0u8; 16];
+            let length = stream.read(&mut buffer).unwrap_or(0);
+            on_open(String::from_utf8_lossy(buffer.get(..length).unwrap_or_default()).into_owned());
         }
     });
     if let Err(e) = spawned {

@@ -20,6 +20,7 @@ use slint::{ComponentHandle as _, ModelRc, VecModel};
 use tokio::sync::watch;
 
 use crate::alerts::Notifier;
+use crate::desktop::Desktop;
 use crate::tray::{self, TrayData, TrayEvent};
 use crate::weather::{self, Control, Snapshot};
 use crate::{
@@ -33,6 +34,7 @@ pub struct App {
     pub flyout: FlyoutWindow,
     pub mini: MiniWindow,
     pub paths: Paths,
+    pub desktop: Desktop,
     pub settings: RefCell<Settings>,
     pub secrets: RefCell<Secrets>,
     pub ui: RefCell<UiState>,
@@ -200,6 +202,23 @@ impl App {
         self.update_radar_activity();
     }
 
+    /// What `--open` asks for, at the start or from a second start.
+    pub fn open_requested(&self, page: &str) {
+        match page {
+            "now" => self.open_main(Some(0)),
+            "forecast" => self.open_main(Some(1)),
+            "radar" => self.open_main(Some(2)),
+            "alerts" => self.open_main(Some(3)),
+            "settings" => self.open_settings(None),
+            "flyout" => self.toggle_flyout(1000, 760),
+            "mini" => {
+                let _ = self.mini.show();
+                self.update_radar_activity();
+            }
+            _ => self.open_main(None),
+        }
+    }
+
     pub fn open_settings(&self, page: Option<i32>) {
         if let Some(page) = page {
             self.settings_window.set_page(page);
@@ -325,7 +344,14 @@ fn view_from(ui: &UiState) -> View {
 }
 
 pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
-    if !cli.allow_multiple && instance::signal_running() {
+    let desktop = cli
+        .home
+        .as_deref()
+        .map_or_else(Desktop::standard, |h| Ok(Desktop::under(h)))?;
+    if let Some(action) = &cli.desktop {
+        return desktop.run_action(action);
+    }
+    if !cli.allow_multiple && instance::signal_running(cli.open.as_deref().unwrap_or("window")) {
         return Ok(());
     }
     let paths = cli
@@ -417,6 +443,7 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         flyout,
         mini,
         paths,
+        desktop,
         settings: RefCell::new(settings),
         secrets: RefCell::new(secrets_store),
         ui: RefCell::new(ui),
@@ -483,26 +510,10 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         }
     })?;
     if !cli.allow_multiple {
-        instance::listen(|| with_app(|app| app.open_main(None)));
+        instance::listen(|page| with_app(move |app| app.open_requested(&page)));
     }
-    let page = match cli.open.as_deref() {
-        Some("now") => Some(0),
-        Some("forecast") => Some(1),
-        Some("radar") => Some(2),
-        Some("alerts") => Some(3),
-        _ => None,
-    };
-    if page.is_some() {
-        app.open_main(page);
-    }
-    match cli.open.as_deref() {
-        Some("settings") => app.open_settings(None),
-        Some("flyout") => app.toggle_flyout(1000, 760),
-        Some("mini") => {
-            let _ = app.mini.show();
-            app.update_radar_activity();
-        }
-        _ => {}
+    if let Some(page) = cli.open.as_deref() {
+        app.open_requested(page);
     }
     slint::run_event_loop_until_quit()?;
     Ok(())
