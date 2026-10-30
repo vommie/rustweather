@@ -5,6 +5,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-10-30
+
 ### Added
 
 - The radar has a map picker right on the map, with a small preview of every map: satellite, satellite without clouds, topographic, streets and terrain, shaded relief,
@@ -87,7 +89,8 @@ First release, replacing the `weather_tray.py` script.
 - Arch package with `build-package.sh`.
 - The application menu entry offers Radar and Settings as actions; a second start opens what it asks for.
 
-[Unreleased]: https://github.com/vommie/rustweather/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/vommie/rustweather/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/vommie/rustweather/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/vommie/rustweather/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/vommie/rustweather/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/vommie/rustweather/releases/tag/v0.1.0
