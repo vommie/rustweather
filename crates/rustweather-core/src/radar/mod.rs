@@ -8,6 +8,7 @@ pub mod motion;
 pub mod outlook;
 pub mod palette;
 pub mod rainviewer;
+pub mod temps;
 pub mod wind;
 
 use chrono::{DateTime, Utc};

@@ -17,6 +17,7 @@ pub struct UiState {
     pub layer_wind: bool,
     pub layer_clouds: bool,
     pub layer_lightning: bool,
+    pub layer_temps: bool,
     pub legacy_import_done: bool,
     /// Where the tray icon was clicked last: the tray protocol tells it only then.
     pub tray_position: Option<(i32, i32)>,
@@ -50,6 +51,7 @@ impl Default for UiState {
             layer_wind: false,
             layer_clouds: false,
             layer_lightning: false,
+            layer_temps: false,
             legacy_import_done: false,
             tray_position: None,
         }

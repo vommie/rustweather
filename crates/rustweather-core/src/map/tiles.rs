@@ -3,6 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
@@ -79,8 +80,12 @@ struct Budget {
 }
 
 impl Budget {
-    async fn take(&self) {
+    /// Waits for a free slot; false when `wanted` says the request has become pointless meanwhile.
+    async fn take(&self, wanted: impl Fn() -> bool) -> bool {
         loop {
+            if !wanted() {
+                return false;
+            }
             let wait = {
                 let mut sent = self.sent.lock();
                 let now = Instant::now();
@@ -93,8 +98,8 @@ impl Budget {
                 }
             };
             match wait {
-                None => return,
-                Some(d) => tokio::time::sleep(d + Duration::from_millis(50)).await,
+                None => return true,
+                Some(d) => tokio::time::sleep(d.min(Duration::from_secs(2)) + Duration::from_millis(50)).await,
             }
         }
     }
@@ -114,6 +119,8 @@ pub struct Store {
     /// Tiles that failed, with the time from which they may be tried again.
     retry_at: Mutex<HashMap<String, Instant>>,
     gate: Arc<Semaphore>,
+    /// Requests of an older round wait in vain: the map has moved on.
+    radar_round: AtomicU64,
     radar_budget: Budget,
 }
 
@@ -146,6 +153,7 @@ impl Store {
             busy: Mutex::new(HashSet::new()),
             retry_at: Mutex::new(HashMap::new()),
             gate: Arc::new(Semaphore::new(8)),
+            radar_round: AtomicU64::new(0),
             radar_budget: Budget {
                 per_minute: 90,
                 sent: Mutex::new(Vec::new()),
@@ -185,10 +193,17 @@ impl Store {
         let url = layer.url_of(z, x, y);
         let limited = layer.id.starts_with("radar-");
         let post = layer.post;
+        let round = self.radar_round.load(Ordering::Relaxed);
         let store = Arc::clone(self);
         runtime.spawn(async move {
-            if limited {
-                store.radar_budget.take().await;
+            if limited
+                && !store
+                    .radar_budget
+                    .take(|| store.radar_round.load(Ordering::Relaxed) == round)
+                    .await
+            {
+                store.busy.lock().remove(&k);
+                return;
             }
             let Ok(_permit) = store.gate.acquire().await else {
                 return;
@@ -227,6 +242,11 @@ impl Store {
             }
         }
         Err(crate::error::Error::format("Map tiles", "not a picture"))
+    }
+
+    /// Gives up radar tiles still waiting for their turn, so an old view does not use up the service's limit.
+    pub fn new_radar_round(&self) {
+        self.radar_round.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn forget_failures(&self) {

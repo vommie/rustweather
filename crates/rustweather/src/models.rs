@@ -372,8 +372,11 @@ pub fn days(snapshot: &Snapshot, settings: &Settings) -> Vec<DayData> {
 }
 
 pub fn alerts(snapshot: &Snapshot) -> Vec<AlertData> {
-    snapshot
-        .alerts
+    alert_rows(&snapshot.alerts)
+}
+
+pub fn alert_rows(alerts: &[model::Alert]) -> Vec<AlertData> {
+    alerts
         .iter()
         .map(|a| {
             let time = |t: Option<DateTime<Utc>>| {
@@ -384,11 +387,26 @@ pub fn alerts(snapshot: &Snapshot) -> Vec<AlertData> {
             AlertData {
                 title: s(a.headline.clone()),
                 text: s(a.description.clone()),
+                instruction: s(a.instruction.clone()),
                 time: s(format!("{} until {}", time(a.onset), time(a.expires))),
                 level: i32::from(a.level),
             }
         })
         .collect()
+}
+
+/// A temperature label's text and color.
+pub fn temp_label(x: f32, y: f32, celsius: f32, unit: TempUnit, scale: f32) -> crate::TempLabel {
+    let text = match unit {
+        TempUnit::Celsius => format!("{celsius:.0}°"),
+        TempUnit::Fahrenheit => format!("{:.0}°", celsius * 9.0 / 5.0 + 32.0),
+    };
+    crate::TempLabel {
+        x: x / scale,
+        y: y / scale,
+        text: s(text),
+        color: slint_color(color::tile(celsius)),
+    }
 }
 
 /// The rain curve of the place.
