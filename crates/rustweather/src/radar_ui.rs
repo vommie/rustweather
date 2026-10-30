@@ -7,11 +7,13 @@ use rustweather_core::map::{Extent, View};
 use rustweather_core::radar::FrameState;
 use rustweather_core::radar::engine::{Command, Event, Notice, Picture};
 use rustweather_core::radar::layers::Kind;
+use rustweather_core::sources::warnings;
 use rustweather_core::ui_state::SavedView;
 use slint::winit_030::WinitWindowAccessor as _;
 use slint::{ComponentHandle as _, Image, ModelRc, Rgba8Pixel, SharedPixelBuffer, VecModel};
 
-use crate::app::App;
+use crate::app::{App, with_app};
+use crate::models;
 use crate::{CityLabel, FrameCell, LayerRect, ViewChip};
 
 fn image(picture: &Picture) -> Image {
@@ -88,6 +90,15 @@ pub fn on_event(app: &App, event: Event) {
         }
         Event::Labels(p) => w.set_labels(p.as_ref().map_or_else(Image::default, image)),
         Event::Wind(p) => w.set_wind(p.as_ref().map_or_else(Image::default, image)),
+        Event::Temps(list) => {
+            let scale = w.window().scale_factor();
+            let unit = app.settings.borrow().units.temperature;
+            let labels: Vec<_> = list
+                .into_iter()
+                .map(|(x, y, t)| models::temp_label(x, y, t, unit, scale))
+                .collect();
+            w.set_temps(ModelRc::new(VecModel::from(labels)));
+        }
         Event::Cities(list) => {
             let scale = w.window().scale_factor();
             let cities: Vec<CityLabel> = list
@@ -238,6 +249,7 @@ fn show_time(app: &App) {
         m => format!("{clock} {m} min"),
     };
     app.main.set_time_label(text.as_str().into());
+    app.flyout.set_time_label(text.as_str().into());
     app.mini.set_time_label(text.into());
 }
 
@@ -247,7 +259,46 @@ pub fn stop(app: &App) {
     app.play_timer.stop();
 }
 
-fn play(app: &std::rc::Rc<App>) {
+/// A click on the map: the full warnings for that point, in the panel on the right. Where none applies, the panel closes.
+fn show_warnings_at(app: &App, lat: f64, lon: f64) {
+    if !app.ui.borrow().layer_alerts {
+        return;
+    }
+    let http = app.http.clone();
+    app.runtime.spawn(async move {
+        let result = warnings::at(&http, lon, lat).await;
+        with_app(move |app| match result {
+            Ok((alerts, _)) if alerts.is_empty() => {
+                app.main.set_warning_area("".into());
+                app.main.set_warning_panel(ModelRc::default());
+            }
+            Ok((alerts, area)) => {
+                app.main.set_warning_area(area.into());
+                app.main
+                    .set_warning_panel(ModelRc::new(VecModel::from(models::alert_rows(&alerts))));
+            }
+            Err(e) => tracing::warn!(error = %e, "[Radar] Warnings for the clicked place failed"),
+        });
+    });
+}
+
+/// The next frame that is complete: playing must not stop at pictures still on their way.
+fn next_ready(app: &App, position: f32) -> f32 {
+    use slint::Model as _;
+    let frames = app.main.get_frames();
+    let count = frames.row_count();
+    let index = position as usize;
+    if count == 0 || frames.row_data(index).is_none_or(|c| c.state == 2) {
+        return position;
+    }
+    (1..count)
+        .map(|step| (index + step) % count)
+        .find(|i| frames.row_data(*i).is_some_and(|c| c.state == 2))
+        // Nothing else is ready: the clock stands still instead of running past a picture that does not change.
+        .map_or(app.position.get(), |i| i as f32)
+}
+
+pub fn play(app: &std::rc::Rc<App>) {
     app.playing.set(true);
     app.main.set_playing(true);
     app.play_last.set(Instant::now());
@@ -271,6 +322,7 @@ fn play(app: &std::rc::Rc<App>) {
                     stop(&app);
                 }
             }
+            let next = next_ready(&app, next);
             // Without smoothing the picture only changes on whole frames.
             app.position.set(next);
             app.main.set_position(next);
@@ -331,6 +383,7 @@ fn show_layers(app: &App) {
     app.main.set_layer_clouds(ui.layer_clouds);
     app.main.set_layer_lightning(ui.layer_lightning);
     app.main.set_layer_wind(ui.layer_wind);
+    app.main.set_layer_temps(ui.layer_temps);
 }
 
 /// Where the small panel belongs: above the icon, inside the screen. Wayland decides by itself where it goes.
@@ -427,6 +480,11 @@ pub fn wire(app: &std::rc::Rc<App>) {
         app.main.set_probe_x(x);
         app.main.set_probe_y(y);
         app.radar.send(Command::Probe { lon, lat });
+        show_warnings_at(&app, lat, lon);
+    });
+    on!(on_warnings_close, |app| {
+        app.main.set_warning_area("".into());
+        app.main.set_warning_panel(ModelRc::default());
     });
     on!(on_probe_close, |app| {
         app.main.set_probe_title("".into());
@@ -495,7 +553,8 @@ pub fn wire(app: &std::rc::Rc<App>) {
                 0 => ui.layer_alerts = !ui.layer_alerts,
                 1 => ui.layer_clouds = !ui.layer_clouds,
                 2 => ui.layer_lightning = !ui.layer_lightning,
-                _ => ui.layer_wind = !ui.layer_wind,
+                3 => ui.layer_wind = !ui.layer_wind,
+                _ => ui.layer_temps = !ui.layer_temps,
             }
         }
         show_layers(&app);

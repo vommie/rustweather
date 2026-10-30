@@ -15,6 +15,7 @@ use super::layers::{self, KINDS, Kind};
 use super::motion::{self, Field};
 use super::palette::{self, Ramp};
 use super::rainviewer;
+use super::temps;
 use super::wind::{self, Field as WindField, Flow};
 use super::{FrameInfo, FrameState};
 use crate::error::{Error, Result};
@@ -32,6 +33,10 @@ const LAYER_FRAME: Duration = Duration::from_millis(200);
 const LAYER_CHECK: Duration = Duration::from_secs(5);
 const CLOUDS_MAX_AGE: Duration = Duration::from_secs(30 * 60);
 const LAYER_RETRY: Duration = Duration::from_secs(60);
+/// The frames stay in memory this long after the last radar view closed: opening the radar next uses them at once.
+const KEEP_WARM: Duration = Duration::from_secs(120);
+/// A view counts as settled after this, so a drag does not ask for every picture on its way.
+const SETTLE: Duration = Duration::from_millis(400);
 const WIND_FRAME: Duration = Duration::from_millis(33);
 const WIND_DELAY: Duration = Duration::from_millis(600);
 const WIND_MAX_AGE: Duration = Duration::from_secs(15 * 60);
@@ -50,6 +55,7 @@ pub struct Config {
     pub alerts_layer: bool,
     pub clouds_layer: bool,
     pub lightning_layer: bool,
+    pub temps_layer: bool,
     pub wind_layer: bool,
 }
 
@@ -106,6 +112,8 @@ pub enum Event {
     Rain(Picture),
     Labels(Option<Picture>),
     Wind(Option<Picture>),
+    /// Pixel position and temperature of each label.
+    Temps(Vec<(f32, f32, f32)>),
     Cities(Vec<(String, f32, f32)>),
     Timeline {
         frames: Vec<FrameInfo>,
@@ -143,6 +151,7 @@ pub enum Command {
         kind: Kind,
     },
     CloudsTime(Result<DateTime<Utc>>),
+    TempsLoaded(Result<Vec<(temps::Cell, f32)>>),
     KeyChecked(bool),
     WindLoaded {
         result: Result<WindField>,
@@ -206,6 +215,12 @@ pub fn start(setup: Setup, events: impl Fn(Event) + Send + 'static) -> Result<Ha
         clouds_time: remembered_clouds_time(&setup.cache_dir.join("clouds-time")),
         clouds_file: setup.cache_dir.join("clouds-time"),
         clouds_asked: None,
+        temps: temps::Store::default(),
+        temps_busy: false,
+        temps_retry: None,
+        moved_at: None,
+        rv_due: None,
+        idle_since: None,
         key_banner: false,
         away: false,
         wind: None,
@@ -260,6 +275,12 @@ struct Worker {
     clouds_time: Option<(DateTime<Utc>, Instant)>,
     clouds_file: PathBuf,
     clouds_asked: Option<Instant>,
+    temps: temps::Store,
+    temps_busy: bool,
+    temps_retry: Option<Instant>,
+    moved_at: Option<Instant>,
+    rv_due: Option<Instant>,
+    idle_since: Option<Instant>,
     /// A notice about the map's key is up.
     key_banner: bool,
     away: bool,
@@ -356,6 +377,9 @@ impl Worker {
     }
 
     fn next_timeout(&self) -> Duration {
+        if !self.active && self.idle_since.is_some() {
+            return Duration::from_secs(5);
+        }
         if !self.active || self.away {
             return Duration::from_secs(3600);
         }
@@ -380,6 +404,8 @@ impl Worker {
                     self.rain_dirty = true;
                     self.flow = None;
                     self.wind_due = Some(Instant::now() + WIND_DELAY);
+                    self.moved_at = Some(Instant::now());
+                    self.rv_due = Some(Instant::now() + SETTLE);
                     if self.kind() != before {
                         self.load_cached();
                         self.fetch();
@@ -415,6 +441,9 @@ impl Worker {
                         }
                     }
                 }
+                if !self.config.temps_layer {
+                    self.emit(Event::Temps(Vec::new()));
+                }
                 if !self.config.wind_layer {
                     self.flow = None;
                     self.emit(Event::Wind(None));
@@ -426,16 +455,7 @@ impl Worker {
             }
             Command::Active(active) => {
                 self.active = active;
-                if !active {
-                    // In the tray the app stays small: the grids can be read back from the disk in a moment.
-                    self.grid = Vec::new();
-                    self.motions = Vec::new();
-                    self.rv = Vec::new();
-                    self.lut = None;
-                    self.flow = None;
-                    self.wind = None;
-                    self.wind_at = None;
-                }
+                self.idle_since = (!active).then(Instant::now);
                 if active {
                     self.load_cached();
                     self.publish_timeline();
@@ -475,6 +495,19 @@ impl Worker {
                 Err(e) => self.failed(&e),
             },
             Command::LayerTile { kind } => self.slots[kind.index()].dirty = true,
+            Command::TempsLoaded(result) => {
+                self.temps_busy = false;
+                match result {
+                    Ok(found) => {
+                        self.temps.insert(found);
+                        self.emit(Event::Temps(self.temps.labels(&self.view)));
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "[Radar] No temperatures");
+                        self.temps_retry = Some(Instant::now() + LAYER_RETRY);
+                    }
+                }
+            }
             Command::CloudsTime(result) => match result {
                 Ok(time) => {
                     self.clouds_time = Some((time, Instant::now()));
@@ -841,10 +874,58 @@ impl Worker {
         self.emit(Event::Wind(Some(picture)));
     }
 
+    /// In the tray the app stays small: the grids can be read back from the disk in a moment.
+    fn drop_when_cold(&mut self) {
+        if self.idle_since.is_some_and(|t| t.elapsed() >= KEEP_WARM) {
+            self.idle_since = None;
+            self.grid = Vec::new();
+            self.motions = Vec::new();
+            self.rv = Vec::new();
+            self.lut = None;
+            self.flow = None;
+            self.wind = None;
+            self.wind_at = None;
+        }
+    }
+
+    /// After the map stopped: the radar frames of the new place, instead of those still queued for the old one.
+    fn preload_after_move(&mut self) {
+        if self.rv_due.is_none_or(|t| t > Instant::now()) {
+            return;
+        }
+        self.rv_due = None;
+        if self.kind() == Provider::RainViewer && !self.rv.is_empty() {
+            self.store.new_radar_round();
+            self.preload_rv();
+            self.report_rv_progress();
+        }
+    }
+
+    fn fetch_temps(&mut self) {
+        if !self.config.temps_layer || self.temps_busy || self.moved_at.is_some_and(|t| t.elapsed() < SETTLE) {
+            return;
+        }
+        if self.temps_retry.is_some_and(|t| t > Instant::now()) {
+            return;
+        }
+        let missing = self.temps.missing(&temps::visible(&self.view));
+        if missing.is_empty() {
+            return;
+        }
+        self.temps_busy = true;
+        let (http, tx) = (self.http.clone(), self.tx.clone());
+        self.runtime.spawn(async move {
+            let _ = tx.send(Command::TempsLoaded(temps::fetch(&http, &missing).await));
+        });
+    }
+
     fn tick(&mut self) {
+        self.drop_when_cold();
         if !self.active || self.away {
             return;
         }
+        self.preload_after_move();
+        self.fetch_temps();
         if self.wind_at.is_some_and(|t| t.elapsed() >= WIND_MAX_AGE) && self.wind_due.is_none() {
             self.wind_due = Some(Instant::now());
         }
@@ -1027,6 +1108,9 @@ impl Worker {
             },
             view,
         ));
+        if self.config.temps_layer {
+            self.emit(Event::Temps(self.temps.labels(&view)));
+        }
         self.emit(Event::Cities(if own { labels::visible(&view) } else { Vec::new() }));
         let labels_picture = labels_layer.map(|layer| {
             let mut rgba = vec![0u8; (view.width * view.height * 4) as usize];
@@ -1135,7 +1219,27 @@ impl Worker {
         };
         let index = position as usize;
         let k = position - index as f32;
-        let (a, b) = (self.rv.get(index).cloned(), self.rv.get(index + 1).cloned());
+        // A frame that is not complete yet must not show an empty map: the nearest complete one stands in.
+        let ready = |i: usize| self.rv.get(i).is_some_and(|f| self.rv_state(f) == FrameState::Ready);
+        let shown = (0..=max)
+            .flat_map(|d| [index.checked_sub(d), Some(index + d)])
+            .flatten()
+            .find(|i| ready(*i))
+            .unwrap_or(index);
+        let a = self.rv.get(shown).cloned();
+        let b = self
+            .rv
+            .get(shown + 1)
+            .filter(|_| shown == index && ready(index + 1))
+            .cloned();
+        if shown != index
+            && let Some(frame) = self.rv.get(index).cloned()
+        {
+            let z = frame.layer.level(view.zoom);
+            for (x, y) in tiles::visible(&view, &frame.layer, z) {
+                self.request(&frame.layer, z, x.rem_euclid(1 << z), y, false);
+            }
+        }
         let opacity = self.config.opacity;
         let mut missing = Vec::new();
         if let Some(frame) = &a {

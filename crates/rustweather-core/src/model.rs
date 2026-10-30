@@ -88,6 +88,7 @@ pub struct Alert {
     pub event: String,
     pub headline: String,
     pub description: String,
+    pub instruction: String,
     pub onset: Option<DateTime<Utc>>,
     pub expires: Option<DateTime<Utc>>,
 }

@@ -4,7 +4,7 @@ import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
 import { Card, Icon, IconButton, StatusLine, Tile, TipLayer, Toast } from "controls.slint";
-import { AlertData, CityLabel, DayData, FrameCell, HourData, LayerRect, NowData, RainBar, ViewChip } from "types.slint";
+import { AlertData, CityLabel, DayData, FrameCell, HourData, LayerRect, NowData, RainBar, TempLabel, ViewChip } from "types.slint";
 import { NowPage } from "now_page.slint";
 import { ForecastPage } from "forecast_page.slint";
 import { RadarPage } from "radar_page.slint";
@@ -12,7 +12,7 @@ import { DesktopRow, HealthRow, PlaceRow, SettingsData, SettingsWindow } from "s
 import { FlyoutWindow } from "flyout.slint";
 import { MiniWindow } from "mini.slint";
 
-export { Theme, SettingsWindow, SettingsData, PlaceRow, DesktopRow, HealthRow, FlyoutWindow, MiniWindow, NowData, HourData, DayData, AlertData, FrameCell, CityLabel, LayerRect, RainBar, ViewChip }
+export { Theme, SettingsWindow, SettingsData, PlaceRow, DesktopRow, HealthRow, FlyoutWindow, MiniWindow, NowData, HourData, DayData, AlertData, FrameCell, CityLabel, LayerRect, RainBar, TempLabel, ViewChip }
 
 component RailButton inherits Rectangle {
     in property <image> icon;
@@ -58,6 +58,7 @@ component AlertsPage inherits ScrollView {
             }
             Text { text: a.time; color: Theme.text-muted; font-size: 11px; }
             Text { text: a.text; color: Theme.text; wrap: word-wrap; font-size: 12px; }
+            if a.instruction != "": Text { text: a.instruction; color: Theme.text-muted; wrap: word-wrap; font-size: 12px; }
         }
     }
 }
@@ -123,6 +124,10 @@ export component MainWindow inherits Window {
     in property <bool> layer-clouds;
     in property <bool> layer-lightning;
     in property <bool> layer-wind;
+    in property <bool> layer-temps;
+    in property <[TempLabel]> temps;
+    in property <[AlertData]> warning-panel;
+    in property <string> warning-area;
 
     callback page-changed(int);
     callback open-settings();
@@ -143,6 +148,7 @@ export component MainWindow inherits Window {
     callback toggle-full();
     callback mini();
     callback banner-act();
+    callback warnings-close();
 
     forward-focus: radar-scope;
     HorizontalLayout {
@@ -219,6 +225,10 @@ export component MainWindow inherits Window {
                     layer-clouds: root.layer-clouds;
                     layer-lightning: root.layer-lightning;
                     layer-wind: root.layer-wind;
+                    layer-temps: root.layer-temps;
+                    temps: root.temps;
+                    warning-panel: root.warning-panel;
+                    warning-area: root.warning-area;
                     full: root.full;
                     resized(w, h) => { root.resized(w, h); }
                     pan(x, y) => { root.pan(x, y); }
@@ -237,6 +247,7 @@ export component MainWindow inherits Window {
                     toggle-full => { root.toggle-full(); }
                     mini => { root.mini(); }
                     banner-act => { root.banner-act(); }
+                    warnings-close => { root.warnings-close(); }
                 }
                 if root.page == 3: AlertsPage { alerts: root.alerts; }
                 if root.toast != "": Toast { x: parent.width - self.width - 12px; y: 42px; text: root.toast; level: root.toast-level; }

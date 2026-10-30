@@ -52,7 +52,9 @@ pub async fn frames(http: &Http) -> Result<Vec<Frame>> {
                     post: Post::None,
                     id,
                     url,
-                    tile_size: 512,
+                    // Counted as 1024: one level coarser than the 512 px pictures would allow. Half the sharpness, a quarter of the requests,
+                    // and 100 requests a minute must cover 13 frames.
+                    tile_size: 1024,
                     max_zoom: 7,
                 },
             })

@@ -89,6 +89,7 @@ struct RawAlert {
     event_de: Option<String>,
     headline_en: Option<String>,
     description_en: Option<String>,
+    instruction_en: Option<String>,
     onset: Option<DateTime<Utc>>,
     expires: Option<DateTime<Utc>>,
 }
@@ -114,6 +115,7 @@ pub async fn alerts(http: &Http, place: &Place) -> Result<Vec<Alert>> {
             event: a.event_en.or(a.event_de).unwrap_or_default(),
             headline: a.headline_en.unwrap_or_default(),
             description: a.description_en.unwrap_or_default(),
+            instruction: a.instruction_en.unwrap_or_default(),
             onset: a.onset,
             expires: a.expires,
         })

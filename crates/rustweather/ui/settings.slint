@@ -11,7 +11,7 @@ export struct SettingsData {
     show-rain: bool, show-alert: bool, show-stale: bool, show-trend: bool,
     line-feels: bool, line-range: bool, line-rain: bool, line-alerts: bool, line-wind: bool, line-humidity: bool,
     line-sun: bool, line-age: bool, line-next: bool,
-    source: int, basemap: int, palette: int, opacity: float, speed: float, smooth: bool, looping: bool, labels: bool,
+    source: int, basemap: int, palette: int, opacity: float, speed: float, smooth: bool, autoplay: bool, looping: bool, labels: bool,
     has-carto: bool,
     cache-limit: int, radar-hours: int, cache-text: string, cache-share: float,
     al-paused: bool, al-rain: bool, al-end: bool, al-dwd: bool, al-storm: bool, al-frost: bool, al-heat: bool,
@@ -207,6 +207,7 @@ export component SettingsWindow inherits Window {
                     SettingRow { label: "Rain colors"; Choice { items: ["Classic", "Calm", "Blue"]; current: root.data.palette; selected(i) => { root.set-int("palette", i); } } }
                     SettingRow { label: "Rain opacity"; Slider { width: 200px; minimum: 20; maximum: 100; value: root.data.opacity; moved(v) => { root.set-float("opacity", v); } } }
                     SettingRow { label: "Speed"; Slider { width: 200px; minimum: 60; maximum: 1000; value: 1060 - root.data.speed; moved(v) => { root.set-float("speed", 1060 - v); } } }
+                    Sw { label: "Play when the radar opens"; key: "autoplay"; on: root.data.autoplay; changed-to(k, v) => { root.set-bool(k, v); } }
                     Sw { label: "Smooth motion"; key: "smooth"; on: root.data.smooth; changed-to(k, v) => { root.set-bool(k, v); } }
                     Sw { label: "Repeat"; key: "looping"; on: root.data.looping; changed-to(k, v) => { root.set-bool(k, v); } }
                     Sw { label: "Place names above the rain"; key: "labels"; on: root.data.labels; changed-to(k, v) => { root.set-bool(k, v); } }

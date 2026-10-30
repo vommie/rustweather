@@ -5,6 +5,17 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- A click on a warning area opens the full warning in a floating panel on the right, in the DWD's German wording.
+- Temperature layer on the radar: labels across the map, more of them the closer you zoom in.
+- The radar plays when it opens (Settings > Radar), and the weather card always plays its small radar. Both use the same data.
+
+### Fixed
+
+- Outside Germany the rain vanished after the first picture when playing: frames still on their way are now skipped, and tiles for a place
+  you already left no longer use up RainViewer's limit.
+
 ## [0.1.2] - 2026-10-30
 
 ### Changed

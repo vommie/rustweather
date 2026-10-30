@@ -203,6 +203,8 @@ pub struct Radar {
     pub smooth: bool,
     pub loop_playback: bool,
     pub labels_above_rain: bool,
+    /// Starts playing when the radar opens.
+    pub autoplay: bool,
 }
 
 impl Default for Radar {
@@ -216,6 +218,7 @@ impl Default for Radar {
             smooth: true,
             loop_playback: true,
             labels_above_rain: true,
+            autoplay: true,
         }
     }
 }

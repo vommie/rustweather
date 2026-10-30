@@ -63,6 +63,7 @@ pub struct App {
     pub hover_timer: slint::Timer,
     pub window_timer: slint::Timer,
     pub shown_view: Cell<View>,
+    pub radar_shown: Cell<(bool, bool, bool)>,
     pub layer_extents: RefCell<[Option<rustweather_core::map::Extent>; 3]>,
 }
 
@@ -134,6 +135,7 @@ impl App {
             alerts_layer: ui.layer_alerts,
             clouds_layer: ui.layer_clouds,
             lightning_layer: ui.layer_lightning,
+            temps_layer: ui.layer_temps,
             wind_layer: ui.layer_wind,
         }
     }
@@ -142,13 +144,24 @@ impl App {
         self.radar.send(Command::Config(Box::new(self.radar_config())));
     }
 
-    /// The radar loads only while it is on screen.
+    /// The radar loads only while it is on screen. A view that opens starts playing: the weather card always, the others by setting.
     pub fn update_radar_activity(&self) {
-        let main_shows = self.main.window().is_visible() && self.main.get_page() == 2;
-        let active = main_shows || self.mini.window().is_visible() || self.flyout.window().is_visible();
+        let now = (
+            self.main.window().is_visible() && self.main.get_page() == 2,
+            self.mini.window().is_visible(),
+            self.flyout.window().is_visible(),
+        );
+        let before = self.radar_shown.replace(now);
+        let active = now.0 || now.1 || now.2;
         self.radar.send(Command::Active(active));
         if !active {
             radar_ui::stop(self);
+            return;
+        }
+        let autoplay = self.settings.borrow().radar.autoplay;
+        let opened = (now.0 && !before.0 && autoplay) || (now.1 && !before.1 && autoplay) || (now.2 && !before.2);
+        if opened && !self.playing.get() {
+            with_app(radar_ui::play);
         }
     }
 
@@ -446,6 +459,7 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         alerts_layer: ui.layer_alerts,
         clouds_layer: ui.layer_clouds,
         lightning_layer: ui.layer_lightning,
+        temps_layer: ui.layer_temps,
         wind_layer: ui.layer_wind,
     };
     if matches!(settings.radar.basemap, Basemap::CartoDark | Basemap::CartoVoyager) && config.carto_key.is_none() {
@@ -498,6 +512,7 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         hover_timer: slint::Timer::default(),
         window_timer: slint::Timer::default(),
         shown_view: Cell::new(view),
+        radar_shown: Cell::new((false, false, false)),
         layer_extents: RefCell::new([None; 3]),
     });
     APP.with(|a| *a.borrow_mut() = Some(Rc::clone(&app)));

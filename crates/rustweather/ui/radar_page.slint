@@ -1,9 +1,10 @@
 // The radar: map layers from Rust, gestures, timeline, playback. Everything on the map floats on it.
 
+import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
 import { Chip, IconButton, Slider, ThinBar, Banner, Icon } from "controls.slint";
-import { CityLabel, FrameCell, LayerRect, RainBar, ViewChip } from "types.slint";
+import { AlertData, CityLabel, FrameCell, LayerRect, RainBar, TempLabel, ViewChip } from "types.slint";
 
 export component Timeline inherits Rectangle {
     in property <[FrameCell]> frames;
@@ -91,6 +92,10 @@ export component RadarPage inherits Rectangle {
     in property <bool> layer-clouds;
     in property <bool> layer-lightning;
     in property <bool> layer-wind;
+    in property <bool> layer-temps;
+    in property <[TempLabel]> temps;
+    in property <[AlertData]> warning-panel;
+    in property <string> warning-area;
     in property <bool> full;
     callback resized(length, length);
     callback pan(length, length);
@@ -109,6 +114,7 @@ export component RadarPage inherits Rectangle {
     callback toggle-full();
     callback mini();
     callback banner-act();
+    callback warnings-close();
     background: Theme.map-back;
     clip: true;
     forward-focus: keys;
@@ -123,6 +129,15 @@ export component RadarPage inherits Rectangle {
     Image { width: 100%; height: 100%; source: root.rain; image-fit: fill; }
     Image { width: 100%; height: 100%; source: root.wind; image-fit: fill; }
     Image { width: 100%; height: 100%; source: root.labels; image-fit: fill; }
+    for t in root.temps: Rectangle {
+        x: t.x - self.width / 2;
+        y: t.y - self.height / 2;
+        width: 34px;
+        height: 20px;
+        border-radius: 5px;
+        background: t.color;
+        Text { text: t.text; color: #ffffff; font-size: 12px; font-weight: 700; }
+    }
     for c in root.cities: Text {
         x: c.x + 6px;
         y: c.y - 8px;
@@ -208,10 +223,11 @@ export component RadarPage inherits Rectangle {
         HorizontalLayout {
             spacing: 4px;
             alignment: start;
-            Chip { text: "Warnings"; tip: "Official DWD warnings by district: the stronger the warning, the darker the color"; icon: Icons.alert-triangle; has-icon: true; checked: root.layer-alerts; clicked => { root.toggle-layer(0); } }
+            Chip { text: "Warnings"; tip: "Official DWD warnings by district: the stronger, the darker. Click an area for the full text"; icon: Icons.alert-triangle; has-icon: true; checked: root.layer-alerts; clicked => { root.toggle-layer(0); } }
             Chip { text: root.clouds-label; tip: "Satellite picture of the clouds. New pictures come every three hours; the time is the picture's"; icon: Icons.cloud; has-icon: true; checked: root.layer-clouds; clicked => { root.toggle-layer(1); } }
             Chip { text: "Lightning"; tip: "Lightning strikes of the last hours, from the DWD"; icon: Icons.bolt; has-icon: true; checked: root.layer-lightning; clicked => { root.toggle-layer(2); } }
             Chip { text: "Wind"; tip: "Current wind: the lines flow with it, the scale is at the bottom right"; icon: Icons.wind; has-icon: true; checked: root.layer-wind; clicked => { root.toggle-layer(3); } }
+            Chip { text: "Temperature"; tip: "Current temperature across the map: the closer you zoom in, the more places"; icon: Icons.temperature; has-icon: true; checked: root.layer-temps; clicked => { root.toggle-layer(4); } }
         }
     }
 
@@ -342,6 +358,43 @@ export component RadarPage inherits Rectangle {
             IconButton { icon: Icons.refresh; tip: "Reload (R)"; clicked => { root.reload(); } }
             IconButton { icon: Icons.pin; tip: "Small radar window, always on top"; clicked => { root.mini(); } }
             IconButton { icon: Icons.maximize; tip: "Fullscreen (F)"; checked: root.full; clicked => { root.toggle-full(); } }
+        }
+    }
+
+    // The full warnings for a clicked place, floating on the right.
+    if root.warning-panel.length > 0: Rectangle {
+        x: root.width - self.width - 8px;
+        y: root.banner != "" ? 42px : 8px;
+        width: min(350px, root.width * 0.45);
+        height: root.height - self.y - 54px;
+        background: Theme.surface;
+        border-width: 1px;
+        border-color: Theme.surface-selected;
+        border-radius: 8px;
+        TouchArea { }
+        VerticalLayout {
+            padding: 10px;
+            spacing: 6px;
+            HorizontalLayout {
+                spacing: 6px;
+                Icon { source: Icons.alert-triangle; tint: Theme.warn; width: 18px; height: 18px; y: 4px; }
+                Text { text: root.warning-area != "" ? root.warning-area : "Warnings"; color: Theme.text; font-weight: 700; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+                IconButton { icon: Icons.x; tip: "Close"; clicked => { root.warnings-close(); } }
+            }
+            ScrollView {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    spacing: 12px;
+                    alignment: start;
+                    for a in root.warning-panel: VerticalLayout {
+                        spacing: 3px;
+                        Text { text: a.title; color: a.level >= 3 ? Theme.error : Theme.warn; font-weight: 700; wrap: word-wrap; }
+                        Text { text: a.time; color: Theme.text-muted; font-size: 11px; }
+                        Text { text: a.text; color: Theme.text; font-size: 12px; wrap: word-wrap; }
+                        if a.instruction != "": Text { text: a.instruction; color: Theme.text-muted; font-size: 12px; wrap: word-wrap; }
+                    }
+                }
+            }
         }
     }
 
