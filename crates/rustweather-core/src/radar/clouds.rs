@@ -1,6 +1,7 @@
-//! The clouds layer: Meteosat pictures from the DWD's map server, free and without a key. New pictures come every three hours and
-//! with a delay. The layer's default time "current" can point at a picture that is gone, so every request names its time and
-//! walks back from the newest slot. The picture is opaque, with land and sea in it: only what is bright stays, as clouds.
+//! The clouds layer: Meteosat pictures from the DWD's map server, free and without a key. New pictures come every three hours.
+//! The server answers the same request sometimes with the picture and sometimes with "no such time", and its default time
+//! "current" fails the same way. So every request names its time, is repeated a few times, and only then falls back to an older
+//! slot. The picture is opaque, with land and sea in it: only what is bright stays, as clouds.
 
 use chrono::{DateTime, DurationRound as _, TimeDelta, Utc};
 
@@ -10,6 +11,7 @@ use crate::map::{View, to_unit};
 
 const LAYER: &str = "dwd:Satellite_meteosat_1km_euat_rgb_day_hrv_and_night_ir108_3h";
 const SLOTS: i64 = 5;
+const TRIES: usize = 4;
 /// Half the view's size: a cloud has soft edges, and the server takes seconds per picture.
 pub const SCALE: u32 = 2;
 const CLEAR: f32 = 0.42;
@@ -60,18 +62,20 @@ pub struct Clouds {
 /// The newest picture there is. The server answers "no such time" with an XML text and HTTP 200, so only a picture counts.
 pub async fn fetch(http: &Http, view: &View) -> Result<Clouds> {
     for time in slots(Utc::now()) {
-        let bytes = http.bytes(&url(view, time)).await?;
-        if let Ok(image) = image::load_from_memory(&bytes) {
-            let image = image.into_rgba8();
-            let (width, height) = image.dimensions();
-            let mut rgba = image.into_raw();
-            keep_clouds(&mut rgba);
-            return Ok(Clouds {
-                width,
-                height,
-                rgba,
-                time,
-            });
+        for _ in 0..TRIES {
+            let bytes = http.bytes(&url(view, time)).await?;
+            if let Ok(image) = image::load_from_memory(&bytes) {
+                let image = image.into_rgba8();
+                let (width, height) = image.dimensions();
+                let mut rgba = image.into_raw();
+                keep_clouds(&mut rgba);
+                return Ok(Clouds {
+                    width,
+                    height,
+                    rgba,
+                    time,
+                });
+            }
         }
     }
     Err(Error::format("DWD", "no satellite picture in the last hours"))
