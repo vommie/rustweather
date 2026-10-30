@@ -9,9 +9,8 @@ use chrono::{DateTime, DurationRound as _, TimeDelta, Utc};
 
 use crate::error::{Error, Result};
 use crate::http::Http;
-use crate::map::Extent;
 
-const LAYER: &str = "dwd:Satellite_meteosat_1km_euat_rgb_day_hrv_and_night_ir108_3h";
+pub const LAYER: &str = "dwd:Satellite_meteosat_1km_euat_rgb_day_hrv_and_night_ir108_3h";
 const SLOTS: i64 = 5;
 const TRIES: usize = 4;
 /// The server renders a satellite picture on request, which takes seconds and sometimes a minute.
@@ -25,17 +24,21 @@ pub fn slots(now: DateTime<Utc>) -> Vec<DateTime<Utc>> {
     (0..SLOTS).map(|i| newest - TimeDelta::hours(3 * i)).collect()
 }
 
-fn url(extent: &Extent, width: u32, height: u32, time: DateTime<Utc>) -> String {
+fn probe_url(time: DateTime<Utc>) -> String {
     format!(
         "https://maps.dwd.de/geoserver/dwd/wms?service=WMS&version=1.3.0&request=GetMap&layers={LAYER}&styles=&crs=EPSG:3857\
-         &bbox={}&width={width}&height={height}&format=image/png&time={}",
-        extent.bbox_3857(),
-        time.format("%Y-%m-%dT%H:%M:00.000Z")
+         &bbox=700000,6000000,1500000,7300000&width=16&height=16&format=image/png&time={}",
+        stamp(time)
     )
 }
 
+/// The time as the server wants it.
+pub fn stamp(time: DateTime<Utc>) -> String {
+    time.format("%Y-%m-%dT%H:%M:00.000Z").to_string()
+}
+
 /// Turns the satellite picture into white clouds on nothing.
-fn keep_clouds(rgba: &mut [u8]) {
+pub fn keep_clouds(rgba: &mut [u8]) {
     for pixel in rgba.as_chunks_mut::<4>().0 {
         let [r, g, b, _] = pixel.map(|v| f32::from(v) / 255.0);
         let light = 0.2126 * r + 0.7152 * g + 0.0722 * b;
@@ -44,31 +47,13 @@ fn keep_clouds(rgba: &mut [u8]) {
     }
 }
 
-pub struct Clouds {
-    pub width: u32,
-    pub height: u32,
-    pub rgba: Vec<u8>,
-    pub time: DateTime<Utc>,
-}
-
-/// The newest picture there is. The server answers "no such time" with an XML text and HTTP 200, so only a picture counts.
-pub async fn fetch(http: &Http, extent: &Extent, width: u32, height: u32) -> Result<Clouds> {
+/// The time of the newest picture there is. The server answers "no such time" with an XML text and HTTP 200, so only a picture counts.
+pub async fn latest(http: &Http) -> Result<DateTime<Utc>> {
     for time in slots(Utc::now()) {
         for _ in 0..TRIES {
-            let bytes = http
-                .bytes_within(&url(extent, width, height, time), PICTURE_TIMEOUT)
-                .await?;
-            if let Ok(image) = image::load_from_memory(&bytes) {
-                let image = image.into_rgba8();
-                let (width, height) = image.dimensions();
-                let mut rgba = image.into_raw();
-                keep_clouds(&mut rgba);
-                return Ok(Clouds {
-                    width,
-                    height,
-                    rgba,
-                    time,
-                });
+            let bytes = http.bytes_within(&probe_url(time), PICTURE_TIMEOUT).await?;
+            if image::load_from_memory(&bytes).is_ok() {
+                return Ok(time);
             }
         }
     }
@@ -92,18 +77,10 @@ mod tests {
 
     #[test]
     fn every_request_names_its_time() {
-        let extent = Extent {
-            x0: 0.5,
-            y0: 0.3,
-            x1: 0.6,
-            y1: 0.4,
-        };
         let time = DateTime::parse_from_rfc3339("2026-10-30T12:00:00Z")
             .unwrap()
             .with_timezone(&Utc);
-        let text = url(&extent, 400, 300, time);
-        assert!(text.contains("&time=2026-10-30T12:00:00.000Z"));
-        assert!(text.contains("&width=400&height=300"));
+        assert!(probe_url(time).contains("&time=2026-10-30T12:00:00.000Z"));
     }
 
     #[test]

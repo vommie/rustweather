@@ -9,8 +9,9 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Utc};
 use rayon::prelude::*;
 
+use super::clouds;
 use super::dwd::{self, Lut, Projector};
-use super::layers::{self, KINDS, Kind, Loaded};
+use super::layers::{self, KINDS, Kind};
 use super::motion::{self, Field};
 use super::palette::{self, Ramp};
 use super::rainviewer;
@@ -18,16 +19,18 @@ use super::wind::{self, Field as WindField, Flow};
 use super::{FrameInfo, FrameState};
 use crate::error::{Error, Result};
 use crate::http::Http;
-use crate::map::tiles::{self, Layer, Store};
+use crate::map::tiles::{self, Layer, Post, Store};
 use crate::map::{Extent, View, in_germany, labels, vector};
 use crate::settings::{Basemap, RadarSource, RainPalette};
 
 const REFRESH: Duration = Duration::from_secs(5 * 60);
 const SLOW_AFTER: Duration = Duration::from_secs(6);
 const RETRIES: [u64; 4] = [10, 30, 60, 300];
-const LAYER_DELAY: Duration = Duration::from_millis(150);
+/// New tiles are shown in steps of this, not one by one.
+const LAYER_FRAME: Duration = Duration::from_millis(200);
+/// How often a layer looks whether its data has become new.
+const LAYER_CHECK: Duration = Duration::from_secs(5);
 const CLOUDS_MAX_AGE: Duration = Duration::from_secs(30 * 60);
-const LAYER_MAX_AGE: Duration = Duration::from_secs(5 * 60);
 const LAYER_RETRY: Duration = Duration::from_secs(60);
 const WIND_FRAME: Duration = Duration::from_millis(33);
 const WIND_DELAY: Duration = Duration::from_millis(600);
@@ -136,12 +139,10 @@ pub enum Command {
     Close,
     DwdLoaded(Result<Vec<dwd::Frame>>),
     RvLoaded(Result<Vec<rainviewer::Frame>>),
-    LayerLoaded {
+    LayerTile {
         kind: Kind,
-        extent: Extent,
-        zoom: f64,
-        result: Result<Loaded>,
     },
+    CloudsTime(Result<DateTime<Utc>>),
     KeyChecked(bool),
     WindLoaded {
         result: Result<WindField>,
@@ -202,6 +203,9 @@ pub fn start(setup: Setup, events: impl Fn(Event) + Send + 'static) -> Result<Ha
         layer_failed: false,
         key_checked: None,
         slots: Default::default(),
+        clouds_time: remembered_clouds_time(&setup.cache_dir.join("clouds-time")),
+        clouds_file: setup.cache_dir.join("clouds-time"),
+        clouds_asked: None,
         key_banner: false,
         away: false,
         wind: None,
@@ -253,6 +257,9 @@ struct Worker {
     layer_failed: bool,
     key_checked: Option<String>,
     slots: [Slot; 3],
+    clouds_time: Option<(DateTime<Utc>, Instant)>,
+    clouds_file: PathBuf,
+    clouds_asked: Option<Instant>,
     /// A notice about the map's key is up.
     key_banner: bool,
     away: bool,
@@ -270,6 +277,7 @@ struct Worker {
 /// The provider's URL for a map layer; the key stays out of `id`, which names cache folders.
 fn carto(style: &str, key: &str) -> Layer {
     Layer {
+        post: Post::None,
         id: format!("carto-{style}"),
         url: format!("https://basemaps.cartocdn.com/rastertiles/{style}/{{z}}/{{x}}/{{y}}.png?key={key}"),
         tile_size: 256,
@@ -284,14 +292,24 @@ pub async fn carto_key_works(http: &Http, key: &str) -> Result<bool> {
     Ok(with_key != without)
 }
 
-/// One picture layer: what it holds, and when it wants new data.
+/// The time of the last satellite picture from the disk. It counts as old, so it gets checked as soon as the network answers.
+fn remembered_clouds_time(file: &std::path::Path) -> Option<(DateTime<Utc>, Instant)> {
+    let text = std::fs::read_to_string(file).ok()?;
+    let time = DateTime::parse_from_rfc3339(text.trim()).ok()?.with_timezone(&Utc);
+    Some((time, Instant::now().checked_sub(CLOUDS_MAX_AGE)?))
+}
+
+/// One picture layer on the map.
 #[derive(Default)]
 struct Slot {
-    due: Option<Instant>,
-    busy: bool,
-    /// The stretch of the map and the zoom of the picture in use.
-    cover: Option<(Extent, f64)>,
-    at: Option<Instant>,
+    /// The data in use.
+    layer: Option<Layer>,
+    /// The stretch of the map and the zoom of the picture on screen.
+    shown: Option<(Extent, f64)>,
+    /// Tiles have arrived, or the view left the picture.
+    dirty: bool,
+    drawn: Option<Instant>,
+    checked: Option<Instant>,
 }
 
 impl Worker {
@@ -344,10 +362,10 @@ impl Worker {
         if self.wind_on() {
             return WIND_FRAME;
         }
-        let next = self.slots.iter().filter_map(|s| s.due).min();
-        next.map_or(Duration::from_secs(1), |t| {
-            t.saturating_duration_since(Instant::now()).min(Duration::from_secs(1))
-        })
+        if self.slots.iter().any(|s| s.dirty) {
+            return Duration::from_millis(50);
+        }
+        Duration::from_secs(1)
     }
 
     fn apply(&mut self, command: Command) -> bool {
@@ -360,7 +378,6 @@ impl Worker {
                     self.lut = None;
                     self.base_dirty = true;
                     self.rain_dirty = true;
-                    self.schedule_layers(LAYER_DELAY);
                     self.flow = None;
                     self.wind_due = Some(Instant::now() + WIND_DELAY);
                     if self.kind() != before {
@@ -398,7 +415,6 @@ impl Worker {
                         }
                     }
                 }
-                self.schedule_layers(Duration::ZERO);
                 if !self.config.wind_layer {
                     self.flow = None;
                     self.emit(Event::Wind(None));
@@ -426,7 +442,6 @@ impl Worker {
                     self.base_dirty = true;
                     self.rain_dirty = true;
                     self.wind_due = Some(Instant::now());
-                    self.schedule_layers(Duration::ZERO);
                     self.check_key();
                     if self.last_fetch.is_none_or(|t| t.elapsed() >= REFRESH) {
                         self.fetch();
@@ -459,12 +474,20 @@ impl Worker {
                 }
                 Err(e) => self.failed(&e),
             },
-            Command::LayerLoaded {
-                kind,
-                extent,
-                zoom,
-                result,
-            } => self.layer_loaded(kind, extent, zoom, result),
+            Command::LayerTile { kind } => self.slots[kind.index()].dirty = true,
+            Command::CloudsTime(result) => match result {
+                Ok(time) => {
+                    self.clouds_time = Some((time, Instant::now()));
+                    // The next start knows at once which tiles on the disk count, also without a network.
+                    let _ = crate::store::write_atomic(&self.clouds_file, time.to_rfc3339().as_bytes());
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "[Radar] No cloud picture");
+                    self.emit(Event::Notice(Notice::Fallback {
+                        text: "No cloud picture right now".into(),
+                    }));
+                }
+            },
             Command::WindLoaded { result } => {
                 self.wind_busy = false;
                 self.wind_at = Some(Instant::now());
@@ -656,85 +679,123 @@ impl Worker {
         }
     }
 
-    /// Asks for a picture only where the one in use no longer serves the view.
-    fn schedule_layers(&mut self, delay: Duration) {
-        let view = self.view;
-        for kind in KINDS {
-            let on = self.layer_on(kind);
-            let slot = &mut self.slots[kind.index()];
-            let served = slot
-                .cover
-                .is_some_and(|(extent, zoom)| layers::covers(&extent, zoom, &view));
-            if on && !served && slot.due.is_none() {
-                slot.due = Some(Instant::now() + delay);
-            }
+    /// Finds the newest satellite picture now and then.
+    fn check_clouds_time(&mut self) {
+        let fresh = self.clouds_time.is_some_and(|(_, at)| at.elapsed() < CLOUDS_MAX_AGE);
+        if fresh || self.clouds_asked.is_some_and(|t| t.elapsed() < LAYER_RETRY) {
+            return;
         }
+        self.clouds_asked = Some(Instant::now());
+        let (http, tx) = (self.http.clone(), self.tx.clone());
+        self.runtime.spawn(async move {
+            let _ = tx.send(Command::CloudsTime(clouds::latest(&http).await));
+        });
     }
 
-    fn layer_loaded(&mut self, kind: Kind, extent: Extent, zoom: f64, result: Result<Loaded>) {
-        let on = self.layer_on(kind);
-        let slot = &mut self.slots[kind.index()];
-        slot.busy = false;
-        slot.at = Some(Instant::now());
-        match result {
-            // A picture for an older view is still right about its place on the map.
-            Ok(loaded) if on => {
-                slot.cover = Some((extent, zoom));
-                let picture = Picture {
-                    width: loaded.width,
-                    height: loaded.height,
-                    rgba: Arc::new(loaded.rgba),
-                };
-                self.emit(Event::Layer {
-                    kind,
-                    picture: Some((picture, extent)),
-                    time: loaded.time,
-                });
-            }
-            Ok(_) => {}
-            Err(e) => {
-                tracing::warn!(error = %e, ?kind, "[Radar] A map layer failed");
-                // Not at once: a server in trouble must not be asked again in a loop.
-                self.slots[kind.index()].due = Some(Instant::now() + LAYER_RETRY);
-                if kind == Kind::Clouds {
-                    self.emit(Event::Notice(Notice::Fallback {
-                        text: "No cloud picture right now".into(),
-                    }));
+    fn request_layer(&self, kind: Kind, layer: &Layer, z: i32, x: i64, y: i64) {
+        let tx = self.tx.clone();
+        self.store
+            .request(&self.runtime, layer, z, x, y, move |result| match result {
+                Ok(()) => {
+                    let _ = tx.send(Command::LayerTile { kind });
                 }
-            }
-        }
-        // The map may have moved on while this was under way.
-        self.schedule_layers(Duration::ZERO);
+                Err(e) => tracing::debug!(error = %e, ?kind, "[Radar] A layer tile failed"),
+            });
     }
 
-    fn fetch_layers(&mut self) {
-        let view = self.view;
-        let now = Instant::now();
-        for kind in KINDS {
-            let on = self.layer_on(kind);
-            let max_age = if kind == Kind::Clouds {
-                CLOUDS_MAX_AGE
-            } else {
-                LAYER_MAX_AGE
-            };
+    /// New data takes over once all of the view is there: until then the old picture stays, so nothing flashes.
+    fn follow_data(&mut self, kind: Kind) {
+        let slot = &self.slots[kind.index()];
+        if slot.checked.is_some_and(|t| t.elapsed() < LAYER_CHECK) {
+            return;
+        }
+        let wanted = match kind {
+            Kind::Clouds => self.clouds_time.map(|(time, _)| layers::layer(kind, time)),
+            _ => Some(layers::layer(kind, layers::bucket(kind, Utc::now()))),
+        };
+        let Some(wanted) = wanted else {
+            return;
+        };
+        if slot.layer.is_none() {
             let slot = &mut self.slots[kind.index()];
-            let stale = slot.at.is_some_and(|t| t.elapsed() >= max_age);
-            if !on || slot.busy || !(stale || slot.due.is_some_and(|t| t <= now)) {
+            slot.layer = Some(wanted);
+            slot.dirty = true;
+            return;
+        }
+        self.slots[kind.index()].checked = Some(Instant::now());
+        if self.slots[kind.index()].layer.as_ref() == Some(&wanted) {
+            return;
+        }
+        let big = layers::big_view(&self.view, kind);
+        let z = wanted.level(big.zoom);
+        let mut complete = true;
+        for (x, y) in tiles::visible(&big, &wanted, z) {
+            let x = x.rem_euclid(1 << z.clamp(0, 30));
+            if self.store.cached(&wanted, z, x, y).is_none() {
+                complete = false;
+                self.request_layer(kind, &wanted, z, x, y);
+            }
+        }
+        if complete {
+            let slot = &mut self.slots[kind.index()];
+            slot.layer = Some(wanted);
+            slot.dirty = true;
+        }
+    }
+
+    /// Puts a layer's picture together from its tiles. What is not there yet is fetched, a coarser tile stands in meanwhile.
+    fn render_layer(&mut self, kind: Kind) {
+        let Some(layer) = self.slots[kind.index()].layer.clone() else {
+            return;
+        };
+        let view = self.view;
+        let big = layers::big_view(&view, kind);
+        let mut rgba = vec![0u8; (big.width * big.height * 4) as usize];
+        for (z, x, y) in tiles::compose(&big, &layer, &self.store, &mut rgba, 1.0) {
+            self.request_layer(kind, &layer, z, x, y);
+        }
+        let extent = big.extent(0.0);
+        let slot = &mut self.slots[kind.index()];
+        slot.dirty = false;
+        slot.drawn = Some(Instant::now());
+        slot.shown = Some((extent, view.zoom));
+        let picture = Picture {
+            width: big.width,
+            height: big.height,
+            rgba: Arc::new(rgba),
+        };
+        let time = if kind == Kind::Clouds {
+            self.clouds_time.map(|(t, _)| t)
+        } else {
+            None
+        };
+        self.emit(Event::Layer {
+            kind,
+            picture: Some((picture, extent)),
+            time,
+        });
+    }
+
+    fn update_layers(&mut self) {
+        let view = self.view;
+        if self.config.clouds_layer {
+            self.check_clouds_time();
+        }
+        for kind in KINDS {
+            if !self.layer_on(kind) {
                 continue;
             }
-            slot.due = None;
-            slot.busy = true;
-            let extent = view.extent(layers::MARGIN);
-            let (http, tx) = (self.http.clone(), self.tx.clone());
-            self.runtime.spawn(async move {
-                let result = layers::fetch(&http, kind, &extent, &view).await;
-                let _ = tx.send(Command::LayerLoaded {
-                    kind,
-                    extent,
-                    zoom: view.zoom,
-                    result,
-                });
-            });
+            self.follow_data(kind);
+            let slot = &mut self.slots[kind.index()];
+            if !slot
+                .shown
+                .is_some_and(|(extent, zoom)| layers::covers(&extent, zoom, &view))
+            {
+                slot.dirty = true;
+            }
+            if slot.dirty && slot.drawn.is_none_or(|t| t.elapsed() >= LAYER_FRAME) {
+                self.render_layer(kind);
+            }
         }
     }
 
@@ -787,7 +848,7 @@ impl Worker {
         if self.wind_at.is_some_and(|t| t.elapsed() >= WIND_MAX_AGE) && self.wind_due.is_none() {
             self.wind_due = Some(Instant::now());
         }
-        self.fetch_layers();
+        self.update_layers();
         self.fetch_wind();
         self.animate_wind();
         if let Some(started) = self.fetching
@@ -915,6 +976,7 @@ impl Worker {
             (Basemap::Own, _) => (None, None),
             (Basemap::Osm, _) => (
                 Some(Layer {
+                    post: Post::None,
                     id: "osm".into(),
                     url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png".into(),
                     tile_size: 256,

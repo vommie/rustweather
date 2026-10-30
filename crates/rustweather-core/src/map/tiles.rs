@@ -6,11 +6,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
+use quick_cache::Weighter;
 use quick_cache::sync::Cache;
 use rayon::prelude::*;
 use tokio::sync::Semaphore;
 
-use super::View;
+use super::{Extent, View};
 use crate::error::Result;
 use crate::http::Http;
 use crate::store;
@@ -20,21 +21,44 @@ pub struct Tile {
     pub rgba: Vec<u8>,
 }
 
+const RAM_BYTES: u64 = 400 * 1024 * 1024;
+const MAP_SERVER_TRIES: usize = 4;
+const MAP_SERVER_TIMEOUT: Duration = Duration::from_secs(90);
+
 /// One tile layer. `url` has `{z}`, `{x}` and `{y}`; `id` names its cache folder and must not contain a key.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Layer {
+    /// What happens to a picture after decoding.
+    pub post: Post,
     pub id: String,
     pub url: String,
     pub tile_size: u32,
     pub max_zoom: i32,
 }
 
+/// Work on a tile before it is cached in RAM.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Post {
+    #[default]
+    None,
+    /// A satellite picture: only the clouds stay.
+    Clouds,
+}
+
 impl Layer {
     fn url_of(&self, z: i32, x: i64, y: i64) -> String {
+        let n = f64::from(1u32 << z.clamp(0, 30));
+        let bbox = Extent {
+            x0: x as f64 / n,
+            y0: y as f64 / n,
+            x1: (x + 1) as f64 / n,
+            y1: (y + 1) as f64 / n,
+        };
         self.url
             .replace("{z}", &z.to_string())
             .replace("{x}", &x.to_string())
             .replace("{y}", &y.to_string())
+            .replace("{bbox}", &bbox.bbox_3857())
     }
 
     /// The tile zoom level that fits a view best.
@@ -85,7 +109,7 @@ pub struct Fetch {
 pub struct Store {
     http: Http,
     dir: PathBuf,
-    ram: Cache<String, Arc<Tile>>,
+    ram: Cache<String, Arc<Tile>, TileWeight>,
     busy: Mutex<HashSet<String>>,
     /// Tiles that failed, with the time from which they may be tried again.
     retry_at: Mutex<HashMap<String, Instant>>,
@@ -93,12 +117,24 @@ pub struct Store {
     radar_budget: Budget,
 }
 
-fn decode(bytes: &[u8]) -> Option<Tile> {
+fn decode(bytes: &[u8], post: Post) -> Option<Tile> {
     let image = image::load_from_memory(bytes).ok()?.into_rgba8();
-    Some(Tile {
-        size: image.width(),
-        rgba: image.into_raw(),
-    })
+    let size = image.width();
+    let mut rgba = image.into_raw();
+    if post == Post::Clouds {
+        crate::radar::clouds::keep_clouds(&mut rgba);
+    }
+    Some(Tile { size, rgba })
+}
+
+/// Counts what a tile really costs: a radar tile takes four times the memory of a map tile.
+#[derive(Clone)]
+struct TileWeight;
+
+impl Weighter<String, Arc<Tile>> for TileWeight {
+    fn weight(&self, _key: &String, tile: &Arc<Tile>) -> u64 {
+        tile.rgba.len() as u64
+    }
 }
 
 impl Store {
@@ -106,7 +142,7 @@ impl Store {
         Self {
             http,
             dir: cache_dir.join("tiles"),
-            ram: Cache::new(1024),
+            ram: Cache::with_weighter(2048, RAM_BYTES, TileWeight),
             busy: Mutex::new(HashSet::new()),
             retry_at: Mutex::new(HashMap::new()),
             gate: Arc::new(Semaphore::new(8)),
@@ -127,7 +163,7 @@ impl Store {
         if let Some(tile) = self.ram.get(&k) {
             return Some(tile);
         }
-        let tile = Arc::new(decode(&std::fs::read(self.path(&k)).ok()?)?);
+        let tile = Arc::new(decode(&std::fs::read(self.path(&k)).ok()?, layer.post)?);
         self.ram.insert(k, Arc::clone(&tile));
         Some(tile)
     }
@@ -148,6 +184,7 @@ impl Store {
         }
         let url = layer.url_of(z, x, y);
         let limited = layer.id.starts_with("radar-");
+        let post = layer.post;
         let store = Arc::clone(self);
         runtime.spawn(async move {
             if limited {
@@ -156,7 +193,7 @@ impl Store {
             let Ok(_permit) = store.gate.acquire().await else {
                 return;
             };
-            let result = store.fetch(&k, &url).await;
+            let result = store.fetch(&k, &url, post).await;
             store.busy.lock().remove(&k);
             if result.is_err() {
                 store
@@ -169,16 +206,27 @@ impl Store {
         true
     }
 
-    async fn fetch(&self, key: &str, url: &str) -> Result<()> {
-        let bytes = self.http.bytes(url).await?;
-        let tile = decode(&bytes).ok_or_else(|| crate::error::Error::format("Map tiles", "not a picture"))?;
-        let path = self.path(key);
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
+    async fn fetch(&self, key: &str, url: &str, post: Post) -> Result<()> {
+        tracing::debug!(key, "[Tiles] Fetching");
+        // A map server answers "not here" as text with HTTP 200, and now and then for something it has.
+        let wms = url.contains("/wms?");
+        for _ in 0..if wms { MAP_SERVER_TRIES } else { 1 } {
+            let bytes = if wms {
+                self.http.bytes_within(url, MAP_SERVER_TIMEOUT).await?
+            } else {
+                self.http.bytes(url).await?
+            };
+            if let Some(tile) = decode(&bytes, post) {
+                let path = self.path(key);
+                if let Some(parent) = path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                store::write_atomic(&path, &bytes)?;
+                self.ram.insert(key.to_owned(), Arc::new(tile));
+                return Ok(());
+            }
         }
-        store::write_atomic(&path, &bytes)?;
-        self.ram.insert(key.to_owned(), Arc::new(tile));
-        Ok(())
+        Err(crate::error::Error::format("Map tiles", "not a picture"))
     }
 
     pub fn forget_failures(&self) {
@@ -348,7 +396,8 @@ pub fn prune(cache_dir: &Path, max_bytes: u64, radar_age: Duration) {
     let now = std::time::SystemTime::now();
     let mut total: u64 = files.iter().map(|f| f.1).sum();
     for (modified, size, path) in files {
-        let is_radar = path.to_string_lossy().contains("radar");
+        let text = path.to_string_lossy();
+        let is_radar = text.contains("radar") || text.contains("layer-");
         let expired = is_radar && now.duration_since(modified).is_ok_and(|age| age > radar_age);
         if (expired || total > max_bytes) && std::fs::remove_file(&path).is_ok() {
             total = total.saturating_sub(size);

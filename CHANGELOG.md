@@ -5,6 +5,15 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Clouds, warnings and lightning are cached like the map: what was seen once appears at once, also after a restart, until the data is new.
+- The rain curve in the weather card only appears when there is rain, and it is labeled.
+
+### Added
+
+- The weather card shows the time of the last update.
+
 ## [0.1.1] - 2026-10-30
 
 ### Changed
