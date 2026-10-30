@@ -409,6 +409,16 @@ pub fn temp_label(x: f32, y: f32, celsius: f32, unit: TempUnit, scale: f32) -> c
     }
 }
 
+/// The ends and the middle of the heatmap's scale.
+pub fn heat_ticks(unit: TempUnit) -> Vec<slint::SharedString> {
+    [-15.0_f32, 10.0, 34.0]
+        .map(|celsius| match unit {
+            TempUnit::Celsius => s(format!("{celsius:.0} °C")),
+            TempUnit::Fahrenheit => s(format!("{:.0} °F", celsius * 9.0 / 5.0 + 32.0)),
+        })
+        .to_vec()
+}
+
 /// The rain curve of the place.
 pub fn bars(snapshot: &Snapshot) -> Vec<RainBar> {
     let now = Utc::now();

@@ -12,7 +12,7 @@ use rustweather_core::map::View;
 use rustweather_core::paths::Paths;
 use rustweather_core::radar::engine::{self, Command, Config, Handle, Setup};
 use rustweather_core::secrets::{self, Secrets};
-use rustweather_core::settings::{Basemap, Settings};
+use rustweather_core::settings::Settings;
 use rustweather_core::ui_state::UiState;
 use rustweather_core::{APP_ID, legacy, store};
 use slint::winit_030::winit::window::WindowAttributes;
@@ -55,6 +55,7 @@ pub struct App {
     pub times: RefCell<Vec<chrono::DateTime<chrono::Utc>>>,
     pub playing: Cell<bool>,
     pub play_timer: slint::Timer,
+    pub traffic_timer: slint::Timer,
     pub play_last: Cell<Instant>,
     pub toast_timer: slint::Timer,
     pub search_results: RefCell<Vec<rustweather_core::settings::Place>>,
@@ -65,6 +66,7 @@ pub struct App {
     pub shown_view: Cell<View>,
     pub radar_shown: Cell<(bool, bool, bool)>,
     pub layer_extents: RefCell<[Option<rustweather_core::map::Extent>; 3]>,
+    pub heat_extent: Cell<Option<rustweather_core::map::Extent>>,
 }
 
 thread_local! {
@@ -136,6 +138,7 @@ impl App {
             clouds_layer: ui.layer_clouds,
             lightning_layer: ui.layer_lightning,
             temps_layer: ui.layer_temps,
+            heat_layer: ui.layer_heat,
             wind_layer: ui.layer_wind,
         }
     }
@@ -427,6 +430,7 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         .enable_all()
         .build()?;
     let http = Http::new()?;
+    http.traffic().persist_to(paths.cache.join("traffic.json"));
     let main = MainWindow::new()?;
     let settings_window = SettingsWindow::new()?;
     let flyout = FlyoutWindow::new()?;
@@ -460,9 +464,10 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         clouds_layer: ui.layer_clouds,
         lightning_layer: ui.layer_lightning,
         temps_layer: ui.layer_temps,
+        heat_layer: ui.layer_heat,
         wind_layer: ui.layer_wind,
     };
-    if matches!(settings.radar.basemap, Basemap::CartoDark | Basemap::CartoVoyager) && config.carto_key.is_none() {
+    if settings.radar.basemap.needs_key() && config.carto_key.is_none() {
         tracing::info!("[App] No CARTO key yet, the own map stands in");
     }
     let setup = Setup {
@@ -504,6 +509,7 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         times: RefCell::new(Vec::new()),
         playing: Cell::new(false),
         play_timer: slint::Timer::default(),
+        traffic_timer: slint::Timer::default(),
         play_last: Cell::new(Instant::now()),
         toast_timer: slint::Timer::default(),
         search_results: RefCell::new(Vec::new()),
@@ -514,11 +520,13 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         shown_view: Cell::new(view),
         radar_shown: Cell::new((false, false, false)),
         layer_extents: RefCell::new([None; 3]),
+        heat_extent: Cell::new(None),
     });
     APP.with(|a| *a.borrow_mut() = Some(Rc::clone(&app)));
 
     radar_ui::wire(&app);
     settings_ui::wire(&app);
+    crate::traffic_ui::wire(&app);
     crate::hover::start(&app);
     crate::window_state::wire(&app);
     app.main.set_page(app.ui.borrow().page);

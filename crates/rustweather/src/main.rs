@@ -10,6 +10,7 @@ mod models;
 mod presence;
 mod radar_ui;
 mod settings_ui;
+mod traffic_ui;
 mod tray;
 mod weather;
 mod window_state;

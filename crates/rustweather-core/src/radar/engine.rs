@@ -20,7 +20,7 @@ use super::wind::{self, Field as WindField, Flow};
 use super::{FrameInfo, FrameState};
 use crate::error::{Error, Result};
 use crate::http::Http;
-use crate::map::tiles::{self, Layer, Post, Store};
+use crate::map::tiles::{self, Layer, Store};
 use crate::map::{Extent, View, in_germany, labels, vector};
 use crate::settings::{Basemap, RadarSource, RainPalette};
 
@@ -37,6 +37,8 @@ const LAYER_RETRY: Duration = Duration::from_secs(60);
 const KEEP_WARM: Duration = Duration::from_secs(120);
 /// A view counts as settled after this, so a drag does not ask for every picture on its way.
 const SETTLE: Duration = Duration::from_millis(400);
+/// The share of a new heatmap that must be known before it replaces the one on screen.
+const HEAT_COVERAGE: f32 = 0.7;
 const WIND_FRAME: Duration = Duration::from_millis(33);
 const WIND_DELAY: Duration = Duration::from_millis(600);
 const WIND_MAX_AGE: Duration = Duration::from_secs(15 * 60);
@@ -56,6 +58,7 @@ pub struct Config {
     pub clouds_layer: bool,
     pub lightning_layer: bool,
     pub temps_layer: bool,
+    pub heat_layer: bool,
     pub wind_layer: bool,
 }
 
@@ -114,6 +117,8 @@ pub enum Event {
     Wind(Option<Picture>),
     /// Pixel position and temperature of each label.
     Temps(Vec<(f32, f32, f32)>),
+    /// The temperature colors and the stretch of the map they show; `None` takes them away.
+    Heat(Option<(Picture, Extent)>),
     Cities(Vec<(String, f32, f32)>),
     Timeline {
         frames: Vec<FrameInfo>,
@@ -218,6 +223,8 @@ pub fn start(setup: Setup, events: impl Fn(Event) + Send + 'static) -> Result<Ha
         temps: temps::Store::default(),
         temps_busy: false,
         temps_retry: None,
+        heat_drawn: None,
+        heat_shown: false,
         moved_at: None,
         rv_due: None,
         idle_since: None,
@@ -278,6 +285,9 @@ struct Worker {
     temps: temps::Store,
     temps_busy: bool,
     temps_retry: Option<Instant>,
+    /// The view the heatmap was last drawn for.
+    heat_drawn: Option<View>,
+    heat_shown: bool,
     moved_at: Option<Instant>,
     rv_due: Option<Instant>,
     idle_since: Option<Instant>,
@@ -293,17 +303,6 @@ struct Worker {
     slow_said: bool,
     rain_dirty: bool,
     base_dirty: bool,
-}
-
-/// The provider's URL for a map layer; the key stays out of `id`, which names cache folders.
-fn carto(style: &str, key: &str) -> Layer {
-    Layer {
-        post: Post::None,
-        id: format!("carto-{style}"),
-        url: format!("https://basemaps.cartocdn.com/rastertiles/{style}/{{z}}/{{x}}/{{y}}.png?key={key}"),
-        tile_size: 256,
-        max_zoom: 19,
-    }
 }
 
 /// True when the key gets another picture than no key at all.
@@ -444,6 +443,11 @@ impl Worker {
                 if !self.config.temps_layer {
                     self.emit(Event::Temps(Vec::new()));
                 }
+                self.heat_drawn = None;
+                if !self.config.heat_layer {
+                    self.heat_shown = false;
+                    self.emit(Event::Heat(None));
+                }
                 if !self.config.wind_layer {
                     self.flow = None;
                     self.emit(Event::Wind(None));
@@ -500,7 +504,10 @@ impl Worker {
                 match result {
                     Ok(found) => {
                         self.temps.insert(found);
-                        self.emit(Event::Temps(self.temps.labels(&self.view)));
+                        if self.config.temps_layer {
+                            self.emit(Event::Temps(self.temps.labels(&self.view)));
+                        }
+                        self.heat_drawn = None;
                     }
                     Err(e) => {
                         tracing::warn!(error = %e, "[Radar] No temperatures");
@@ -902,13 +909,20 @@ impl Worker {
     }
 
     fn fetch_temps(&mut self) {
-        if !self.config.temps_layer || self.temps_busy || self.moved_at.is_some_and(|t| t.elapsed() < SETTLE) {
+        let wanted = self.config.temps_layer || self.config.heat_layer;
+        if !wanted || self.temps_busy || self.moved_at.is_some_and(|t| t.elapsed() < SETTLE) {
             return;
         }
+        self.draw_heat();
         if self.temps_retry.is_some_and(|t| t > Instant::now()) {
             return;
         }
-        let missing = self.temps.missing(&temps::visible(&self.view));
+        let cells = if self.config.heat_layer {
+            temps::around(&self.view)
+        } else {
+            temps::visible(&self.view)
+        };
+        let missing = self.temps.missing(&cells);
         if missing.is_empty() {
             return;
         }
@@ -917,6 +931,29 @@ impl Worker {
         self.runtime.spawn(async move {
             let _ = tx.send(Command::TempsLoaded(temps::fetch(&http, &missing).await));
         });
+    }
+
+    /// After a zoom the cells are new: the old picture stays on its place on the map until most of the new one is known.
+    fn draw_heat(&mut self) {
+        if !self.config.heat_layer || self.heat_drawn == Some(self.view) {
+            return;
+        }
+        self.heat_drawn = Some(self.view);
+        let Some(heat) = self.temps.heat(&self.view) else {
+            return;
+        };
+        if self.heat_shown && heat.coverage < HEAT_COVERAGE {
+            return;
+        }
+        self.heat_shown = true;
+        self.emit(Event::Heat(Some((
+            Picture {
+                width: heat.width,
+                height: heat.height,
+                rgba: Arc::new(heat.rgba),
+            },
+            heat.extent,
+        ))));
     }
 
     fn tick(&mut self) {
@@ -1052,30 +1089,9 @@ impl Worker {
         if self.layer_failed {
             return (None, None);
         }
-        let split = self.config.labels_above_rain;
-        match (self.config.basemap, self.config.carto_key.as_deref()) {
-            (Basemap::Own, _) => (None, None),
-            (Basemap::Osm, _) => (
-                Some(Layer {
-                    post: Post::None,
-                    id: "osm".into(),
-                    url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png".into(),
-                    tile_size: 256,
-                    max_zoom: 19,
-                }),
-                None,
-            ),
-            (Basemap::CartoDark, Some(key)) if split => {
-                (Some(carto("dark_nolabels", key)), Some(carto("dark_only_labels", key)))
-            }
-            (Basemap::CartoDark, Some(key)) => (Some(carto("dark_all", key)), None),
-            (Basemap::CartoVoyager, Some(key)) if split => (
-                Some(carto("voyager_nolabels", key)),
-                Some(carto("voyager_only_labels", key)),
-            ),
-            (Basemap::CartoVoyager, Some(key)) => (Some(carto("voyager", key)), None),
-            (Basemap::CartoDark | Basemap::CartoVoyager, None) => (None, None),
-        }
+        self.config
+            .basemap
+            .layers(self.config.carto_key.as_deref(), self.config.labels_above_rain)
     }
 
     fn render_base(&mut self) {
@@ -1083,8 +1099,7 @@ impl Worker {
         let colors = if self.config.dark { vector::DARK } else { vector::LIGHT };
         let mut rgba = vector::draw(&view, colors);
         let (base, labels_layer) = self.map_layers();
-        let no_key = self.config.carto_key.is_none()
-            && matches!(self.config.basemap, Basemap::CartoDark | Basemap::CartoVoyager);
+        let no_key = self.config.carto_key.is_none() && self.config.basemap.needs_key();
         if no_key && !self.key_banner {
             self.key_banner = true;
             self.emit(Event::Notice(Notice::MissingKey {

@@ -179,6 +179,14 @@ pub enum Basemap {
     CartoVoyager,
     Own,
     Osm,
+    Satellite,
+    Sentinel,
+    Topographic,
+    Terrain,
+    Relief,
+    TopPlus,
+    LightGray,
+    DarkGray,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]

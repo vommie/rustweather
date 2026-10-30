@@ -7,10 +7,12 @@ use rustweather_core::map::{Extent, View};
 use rustweather_core::radar::FrameState;
 use rustweather_core::radar::engine::{Command, Event, Notice, Picture};
 use rustweather_core::radar::layers::Kind;
+use rustweather_core::secrets;
+use rustweather_core::settings::Basemap;
 use rustweather_core::sources::warnings;
 use rustweather_core::ui_state::SavedView;
 use slint::winit_030::WinitWindowAccessor as _;
-use slint::{ComponentHandle as _, Image, ModelRc, Rgba8Pixel, SharedPixelBuffer, VecModel};
+use slint::{ComponentHandle as _, Image, ModelRc, Rgba8Pixel, SharedPixelBuffer, SharedString, VecModel};
 
 use crate::app::{App, with_app};
 use crate::models;
@@ -53,6 +55,7 @@ fn place_layers(app: &App) {
     app.main.set_clouds_rect(rect(extents[Kind::Clouds.index()]));
     app.main.set_warnings_rect(rect(extents[Kind::Warnings.index()]));
     app.main.set_lightning_rect(rect(extents[Kind::Lightning.index()]));
+    app.main.set_heat_rect(rect(app.heat_extent.get()));
 }
 
 pub fn on_event(app: &App, event: Event) {
@@ -98,6 +101,11 @@ pub fn on_event(app: &App, event: Event) {
                 .map(|(x, y, t)| models::temp_label(x, y, t, unit, scale))
                 .collect();
             w.set_temps(ModelRc::new(VecModel::from(labels)));
+        }
+        Event::Heat(picture) => {
+            w.set_heat(picture.as_ref().map_or_else(Image::default, |(p, _)| image(p)));
+            app.heat_extent.set(picture.map(|(_, extent)| extent));
+            place_layers(app);
         }
         Event::Cities(list) => {
             let scale = w.window().scale_factor();
@@ -384,6 +392,40 @@ fn show_layers(app: &App) {
     app.main.set_layer_lightning(ui.layer_lightning);
     app.main.set_layer_wind(ui.layer_wind);
     app.main.set_layer_temps(ui.layer_temps);
+    app.main.set_layer_heat(ui.layer_heat);
+}
+
+/// The list of maps, the one in use and what its license asks to show.
+pub fn show_maps(app: &App) {
+    let has_key = app.secrets.borrow().get(secrets::CARTO).is_some();
+    let names: Vec<SharedString> = Basemap::ALL
+        .iter()
+        .map(|map| {
+            if map.needs_key() && !has_key {
+                format!("{} (needs a key)", map.name()).into()
+            } else {
+                map.name().into()
+            }
+        })
+        .collect();
+    let current = app.settings.borrow().radar.basemap;
+    let shown = if current.needs_key() && !has_key {
+        ""
+    } else {
+        current.credit()
+    };
+    app.main.set_maps(ModelRc::new(VecModel::from(names)));
+    app.main
+        .set_map_current(Basemap::ALL.iter().position(|m| *m == current).unwrap_or(0) as i32);
+    app.main.set_map_credit(shown.into());
+    app.mini.set_map_credit(shown.into());
+    app.flyout.set_map_credit(shown.into());
+}
+
+/// The heatmap's scale, in the chosen unit.
+pub fn show_heat_scale(app: &App) {
+    let ticks = models::heat_ticks(app.settings.borrow().units.temperature);
+    app.main.set_heat_ticks(ModelRc::new(VecModel::from(ticks)));
 }
 
 /// Where the small panel belongs: above the icon, inside the screen. Wayland decides by itself where it goes.
@@ -554,12 +596,22 @@ pub fn wire(app: &std::rc::Rc<App>) {
                 1 => ui.layer_clouds = !ui.layer_clouds,
                 2 => ui.layer_lightning = !ui.layer_lightning,
                 3 => ui.layer_wind = !ui.layer_wind,
-                _ => ui.layer_temps = !ui.layer_temps,
+                4 => ui.layer_temps = !ui.layer_temps,
+                _ => ui.layer_heat = !ui.layer_heat,
             }
         }
         show_layers(&app);
         app.push_radar_config();
         app.save_ui();
+    });
+    on!(on_pick_map, |app, index| {
+        let map = usize::try_from(index).ok().and_then(|i| Basemap::ALL.get(i).copied());
+        if let Some(map) = map {
+            app.settings.borrow_mut().radar.basemap = map;
+            show_maps(&app);
+            app.push_radar_config();
+            app.save_settings();
+        }
     });
     on!(on_toggle_full, |app| {
         let full = !app.main.get_full();
@@ -654,4 +706,6 @@ pub fn wire(app: &std::rc::Rc<App>) {
     app.main.set_looping(app.settings.borrow().radar.loop_playback);
     apply_view(app, app.view.get());
     show_layers(app);
+    show_maps(app);
+    show_heat_scale(app);
 }
