@@ -39,7 +39,7 @@ proj4rs = "0.3"
 # Only for the optional wetterdienst.de fallback.
 scraper = "0.24"
 resvg = "0.48"
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 quick_cache = "0.7"
 rayon = "1"
 parking_lot = "0.12"

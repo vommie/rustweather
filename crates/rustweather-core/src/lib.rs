@@ -13,6 +13,7 @@ pub mod settings;
 pub mod sources;
 pub mod store;
 pub mod tooltip;
+pub mod traffic;
 pub mod tray_icon;
 pub mod ui_state;
 

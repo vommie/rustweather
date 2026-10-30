@@ -8,11 +8,11 @@ import { AlertData, CityLabel, DayData, FrameCell, HourData, LayerRect, NowData,
 import { NowPage } from "now_page.slint";
 import { ForecastPage } from "forecast_page.slint";
 import { RadarPage } from "radar_page.slint";
-import { DesktopRow, HealthRow, PlaceRow, SettingsData, SettingsWindow } from "settings.slint";
+import { DesktopRow, HealthRow, PlaceRow, SettingsData, SettingsWindow, TrafficEntry, TrafficHost } from "settings.slint";
 import { FlyoutWindow } from "flyout.slint";
 import { MiniWindow } from "mini.slint";
 
-export { Theme, SettingsWindow, SettingsData, PlaceRow, DesktopRow, HealthRow, FlyoutWindow, MiniWindow, NowData, HourData, DayData, AlertData, FrameCell, CityLabel, LayerRect, RainBar, TempLabel, ViewChip }
+export { Theme, SettingsWindow, SettingsData, PlaceRow, DesktopRow, HealthRow, TrafficEntry, TrafficHost, FlyoutWindow, MiniWindow, NowData, HourData, DayData, AlertData, FrameCell, CityLabel, LayerRect, RainBar, TempLabel, ViewChip }
 
 component RailButton inherits Rectangle {
     in property <image> icon;
@@ -125,6 +125,13 @@ export component MainWindow inherits Window {
     in property <bool> layer-lightning;
     in property <bool> layer-wind;
     in property <bool> layer-temps;
+    in property <bool> layer-heat;
+    in property <image> heat;
+    in property <LayerRect> heat-rect;
+    in property <[string]> heat-ticks;
+    in property <[string]> maps;
+    in property <int> map-current;
+    in property <string> map-credit;
     in property <[TempLabel]> temps;
     in property <[AlertData]> warning-panel;
     in property <string> warning-area;
@@ -149,6 +156,7 @@ export component MainWindow inherits Window {
     callback mini();
     callback banner-act();
     callback warnings-close();
+    callback pick-map(int);
 
     forward-focus: radar-scope;
     HorizontalLayout {
@@ -226,6 +234,13 @@ export component MainWindow inherits Window {
                     layer-lightning: root.layer-lightning;
                     layer-wind: root.layer-wind;
                     layer-temps: root.layer-temps;
+                    layer-heat: root.layer-heat;
+                    heat: root.heat;
+                    heat-rect: root.heat-rect;
+                    heat-ticks: root.heat-ticks;
+                    maps: root.maps;
+                    map-current: root.map-current;
+                    map-credit: root.map-credit;
                     temps: root.temps;
                     warning-panel: root.warning-panel;
                     warning-area: root.warning-area;
@@ -248,6 +263,7 @@ export component MainWindow inherits Window {
                     mini => { root.mini(); }
                     banner-act => { root.banner-act(); }
                     warnings-close => { root.warnings-close(); }
+                    pick-map(i) => { root.pick-map(i); }
                 }
                 if root.page == 3: AlertsPage { alerts: root.alerts; }
                 if root.toast != "": Toast { x: parent.width - self.width - 12px; y: 42px; text: root.toast; level: root.toast-level; }

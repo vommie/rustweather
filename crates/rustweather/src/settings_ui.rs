@@ -6,7 +6,7 @@ use std::time::Duration;
 use rustweather_core::map::tiles;
 use rustweather_core::radar::engine::{Command, carto_key_works};
 use rustweather_core::secrets;
-use rustweather_core::settings::{Basemap, Place, RadarSource, RainPalette, Settings, TempUnit, ThemeMode, WindUnit};
+use rustweather_core::settings::{Place, RadarSource, RainPalette, Settings, TempUnit, ThemeMode, WindUnit};
 use rustweather_core::sources::geocode;
 use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
 
@@ -69,12 +69,6 @@ fn data(app: &App, s: &Settings) -> SettingsData {
             RadarSource::Auto => 0,
             RadarSource::Dwd => 1,
             RadarSource::RainViewer => 2,
-        },
-        basemap: match s.radar.basemap {
-            Basemap::CartoDark => 0,
-            Basemap::CartoVoyager => 1,
-            Basemap::Own => 2,
-            Basemap::Osm => 3,
         },
         palette: match s.radar.palette {
             RainPalette::Classic => 0,
@@ -267,13 +261,6 @@ fn set_int(s: &mut Settings, key: &str, value: i32) {
                 RadarSource::Auto,
             )
         }
-        "basemap" => {
-            s.radar.basemap = pick(
-                &[Basemap::CartoDark, Basemap::CartoVoyager, Basemap::Own, Basemap::Osm],
-                value,
-                Basemap::Own,
-            )
-        }
         "palette" => {
             s.radar.palette = pick(
                 &[RainPalette::Classic, RainPalette::Calm, RainPalette::Blue],
@@ -310,6 +297,7 @@ fn apply(app: &App) {
     app.flyout.global::<Theme>().set_mode(mode);
     app.mini.global::<Theme>().set_mode(mode);
     app.push_radar_config();
+    crate::radar_ui::show_heat_scale(app);
     app.show_weather();
 }
 
@@ -414,6 +402,7 @@ pub fn wire(app: &Rc<App>) {
     });
     on!(on_save_key, |app, key| {
         app.secrets.borrow_mut().set(secrets::CARTO, &key);
+        crate::radar_ui::show_maps(&app);
         match app.secrets.borrow().save(&app.paths.secrets_file()) {
             Ok(()) => app.settings_window.set_key_state("Saved.".into()),
             Err(e) => app.toast(&format!("Could not save the key: {e}"), 3),

@@ -11,7 +11,7 @@ export struct SettingsData {
     show-rain: bool, show-alert: bool, show-stale: bool, show-trend: bool,
     line-feels: bool, line-range: bool, line-rain: bool, line-alerts: bool, line-wind: bool, line-humidity: bool,
     line-sun: bool, line-age: bool, line-next: bool,
-    source: int, basemap: int, palette: int, opacity: float, speed: float, smooth: bool, autoplay: bool, looping: bool, labels: bool,
+    source: int, palette: int, opacity: float, speed: float, smooth: bool, autoplay: bool, looping: bool, labels: bool,
     has-carto: bool,
     cache-limit: int, radar-hours: int, cache-text: string, cache-share: float,
     al-paused: bool, al-rain: bool, al-end: bool, al-dwd: bool, al-storm: bool, al-frost: bool, al-heat: bool,
@@ -21,6 +21,8 @@ export struct SettingsData {
 
 export struct PlaceRow { name: string, active: bool }
 export struct DesktopRow { name: string, ok: bool, detail: string }
+export struct TrafficHost { provider: string, host: string, running: int, minute: string, today: string, limit: string, session: string, failed: int, data: string, time: string }
+export struct TrafficEntry { time: string, provider: string, what: string, outcome: string, failed: bool, time-taken: string, size: string }
 export struct HealthRow { name: string, state: int, last: string, latency: string, detail: string }
 
 component Sw inherits SettingRow {
@@ -63,6 +65,10 @@ export component SettingsWindow inherits Window {
     in property <bool> desktop-can-remove;
     in property <[DesktopRow]> desktop-rows;
     in property <string> key-state;
+    in property <string> traffic-summary;
+    in property <[TrafficHost]> traffic-hosts;
+    in property <[TrafficEntry]> traffic-entries;
+    in-out property <bool> traffic-paused;
     in property <string> version;
     in property <string> toast;
     in property <int> toast-level;
@@ -84,6 +90,7 @@ export component SettingsWindow inherits Window {
     callback offline-map();
     callback test-notification();
     callback install-desktop();
+    callback traffic-reset();
     callback remove-desktop();
     public function copy-text(text: string) {
         clipboard.text = text;
@@ -97,7 +104,7 @@ export component SettingsWindow inherits Window {
         { icon: Icons.map, name: "Radar" }, { icon: Icons.cloud, name: "Sources" }, { icon: Icons.database, name: "Cache" },
         { icon: Icons.alert-triangle, name: "Alerts" }, { icon: Icons.gauge, name: "Units" }, { icon: Icons.device-desktop, name: "Desktop" },
         { icon: Icons.keyboard, name: "Hotkeys" },
-        { icon: Icons.activity, name: "Diagnostics" }, { icon: Icons.info-circle, name: "About" }];
+        { icon: Icons.activity, name: "Diagnostics" }, { icon: Icons.arrows-exchange, name: "Network" }, { icon: Icons.info-circle, name: "About" }];
 
     HorizontalLayout {
         Rectangle {
@@ -202,8 +209,6 @@ export component SettingsWindow inherits Window {
                 Card {
                     SettingRow { label: "Source"; detail: "Auto uses the DWD over Germany and RainViewer elsewhere.";
                         Choice { items: ["Auto", "DWD", "RainViewer"]; current: root.data.source; selected(i) => { root.set-int("source", i); } } }
-                    SettingRow { label: "Map"; detail: root.data.has-carto ? "" : "CARTO maps need a key (page Sources); until then the own map stands in.";
-                        Choice { items: ["CARTO dark", "CARTO Voyager", "Own map", "OpenStreetMap"]; current: root.data.basemap; selected(i) => { root.set-int("basemap", i); } } }
                     SettingRow { label: "Rain colors"; Choice { items: ["Classic", "Calm", "Blue"]; current: root.data.palette; selected(i) => { root.set-int("palette", i); } } }
                     SettingRow { label: "Rain opacity"; Slider { width: 200px; minimum: 20; maximum: 100; value: root.data.opacity; moved(v) => { root.set-float("opacity", v); } } }
                     SettingRow { label: "Speed"; Slider { width: 200px; minimum: 60; maximum: 1000; value: 1060 - root.data.speed; moved(v) => { root.set-float("speed", 1060 - v); } } }
@@ -370,10 +375,65 @@ export component SettingsWindow inherits Window {
                 }
             }
             if root.page == 11: Page {
+                title: "Network";
+                Text { text: root.traffic-summary; color: Theme.text-muted; font-size: 12px; wrap: word-wrap; }
+                HorizontalLayout {
+                    spacing: 6px;
+                    alignment: start;
+                    TextButton { text: root.traffic-paused ? "Go on" : "Pause list"; icon: root.traffic-paused ? Icons.player-play : Icons.player-pause; has-icon: true; clicked => { root.traffic-paused = !root.traffic-paused; } }
+                    TextButton { text: "Start over"; icon: Icons.refresh; has-icon: true; clicked => { root.traffic-reset(); } }
+                }
+                Card {
+                    title: "Servers";
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text { text: "Server"; color: Theme.text-muted; font-size: 11px; horizontal-stretch: 1; }
+                        Text { text: "Now"; color: Theme.text-muted; font-size: 11px; width: 32px; horizontal-alignment: right; }
+                        Text { text: "Minute"; color: Theme.text-muted; font-size: 11px; width: 44px; horizontal-alignment: right; }
+                        Text { text: "Today"; color: Theme.text-muted; font-size: 11px; width: 64px; horizontal-alignment: right; }
+                        Text { text: "Session"; color: Theme.text-muted; font-size: 11px; width: 50px; horizontal-alignment: right; }
+                        Text { text: "Errors"; color: Theme.text-muted; font-size: 11px; width: 42px; horizontal-alignment: right; }
+                        Text { text: "Data"; color: Theme.text-muted; font-size: 11px; width: 60px; horizontal-alignment: right; }
+                        Text { text: "Average"; color: Theme.text-muted; font-size: 11px; width: 60px; horizontal-alignment: right; }
+                    }
+                    for h in root.traffic-hosts: HorizontalLayout {
+                        spacing: 8px;
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            Text { text: h.provider; color: Theme.text; font-size: 12px; overflow: elide; }
+                            Text { text: h.host; color: Theme.text-muted; font-size: 10px; overflow: elide; }
+                        }
+                        Text { text: h.running; color: h.running > 0 ? Theme.primary : Theme.text-muted; font-size: 12px; width: 32px; horizontal-alignment: right; }
+                        Text { text: h.minute; color: Theme.text; font-size: 12px; width: 44px; horizontal-alignment: right; }
+                        VerticalLayout {
+                            width: 64px;
+                            Text { text: h.today; color: Theme.text; font-size: 12px; horizontal-alignment: right; }
+                            if h.limit != "": Text { text: "of " + h.limit; color: Theme.text-muted; font-size: 9px; horizontal-alignment: right; }
+                        }
+                        Text { text: h.session; color: Theme.text; font-size: 12px; width: 50px; horizontal-alignment: right; }
+                        Text { text: h.failed; color: h.failed > 0 ? Theme.error : Theme.text-muted; font-size: 12px; width: 42px; horizontal-alignment: right; }
+                        Text { text: h.data; color: Theme.text; font-size: 12px; width: 60px; horizontal-alignment: right; }
+                        Text { text: h.time; color: Theme.text; font-size: 12px; width: 60px; horizontal-alignment: right; }
+                    }
+                }
+                Card {
+                    title: "Latest requests";
+                    for e in root.traffic-entries: HorizontalLayout {
+                        spacing: 8px;
+                        Text { text: e.time; color: Theme.text-muted; font-size: 11px; width: 54px; }
+                        Text { text: e.provider; color: Theme.text; font-size: 11px; width: 86px; overflow: elide; }
+                        Text { text: e.what; color: Theme.text-muted; font-size: 11px; horizontal-stretch: 1; overflow: elide; }
+                        Text { text: e.outcome; color: e.failed ? Theme.error : Theme.ok; font-size: 11px; width: 46px; horizontal-alignment: right; }
+                        Text { text: e.time-taken; color: Theme.text-muted; font-size: 11px; width: 54px; horizontal-alignment: right; }
+                        Text { text: e.size; color: Theme.text-muted; font-size: 11px; width: 54px; horizontal-alignment: right; }
+                    }
+                }
+            }
+            if root.page == 12: Page {
                 title: "About";
                 Card {
                     Text { text: "RustWeather " + root.version; color: Theme.text; font-weight: 700; }
-                    Text { text: "Weather data: DWD through Bright Sky, Open-Meteo, RainViewer. Maps: CARTO, OpenStreetMap contributors, Natural Earth. Icons: Tabler (MIT)."; color: Theme.text-muted; wrap: word-wrap; }
+                    Text { text: "Weather data: DWD through Bright Sky, Open-Meteo, RainViewer. Maps: OpenStreetMap contributors, Esri, EOX, OpenTopoMap, BKG, CARTO, Natural Earth. Icons: Tabler (MIT)."; color: Theme.text-muted; wrap: word-wrap; }
                 }
             }
             if root.toast != "": Toast { x: parent.width - self.width - 12px; y: 12px; text: root.toast; level: root.toast-level; }

@@ -6,6 +6,7 @@ use reqwest::{Client, StatusCode};
 use serde::de::DeserializeOwned;
 
 use crate::error::{Error, Result};
+use crate::traffic::Traffic;
 
 /// Most answers come in moments; this also bounds a whole download.
 const TIMEOUT: Duration = Duration::from_secs(30);
@@ -24,6 +25,7 @@ fn failure(host: &str, error: reqwest::Error) -> Error {
 #[derive(Clone)]
 pub struct Http {
     client: Client,
+    traffic: Traffic,
 }
 
 fn host(url: &str) -> String {
@@ -46,7 +48,15 @@ impl Http {
             .pool_idle_timeout(Duration::from_secs(90))
             .build()
             .map_err(|e| Error::format("HTTP client", e))?;
-        Ok(Self { client })
+        Ok(Self {
+            client,
+            traffic: Traffic::default(),
+        })
+    }
+
+    /// What has gone over the network, for the Network page.
+    pub fn traffic(&self) -> &Traffic {
+        &self.traffic
     }
 
     /// Fetches a body. The URL can carry an API key, so it never appears in an error or a log.
@@ -69,6 +79,14 @@ impl Http {
 
     async fn fetch(&self, url: &str, limit: Duration) -> Result<Vec<u8>> {
         let name = host(url);
+        let flight = self.traffic.begin(&name);
+        let result = self.request(url, name, limit).await;
+        let bytes = result.as_ref().map_or(0, Vec::len) as u64;
+        self.traffic.finish(flight, url, &result, bytes);
+        result
+    }
+
+    async fn request(&self, url: &str, name: String, limit: Duration) -> Result<Vec<u8>> {
         let response = self
             .client
             .get(url)

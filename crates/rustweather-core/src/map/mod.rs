@@ -1,5 +1,6 @@
 //! The map: Web Mercator views, tile layers, and the app's own vector map as the fallback under everything.
 
+pub mod basemaps;
 pub mod labels;
 pub mod tiles;
 pub mod vector;
