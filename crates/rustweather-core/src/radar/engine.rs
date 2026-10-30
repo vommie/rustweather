@@ -16,6 +16,7 @@ use super::motion::{self, Field};
 use super::palette::{self, Ramp};
 use super::rainviewer;
 use super::temps;
+use super::thumbs::Thumbs;
 use super::wind::{self, Field as WindField, Flow};
 use super::{FrameInfo, FrameState};
 use crate::error::{Error, Result};
@@ -119,6 +120,11 @@ pub enum Event {
     Temps(Vec<(f32, f32, f32)>),
     /// The temperature colors and the stretch of the map they show; `None` takes them away.
     Heat(Option<(Picture, Extent)>),
+    /// A picture for the map picker; `index` is the place in `Basemap::ALL`.
+    MapThumb {
+        index: usize,
+        picture: Picture,
+    },
     Cities(Vec<(String, f32, f32)>),
     Timeline {
         frames: Vec<FrameInfo>,
@@ -149,6 +155,8 @@ pub enum Command {
         lat: f64,
     },
     PreloadGermany,
+    /// The map picker opens around a place, or closes.
+    MapThumbs(Option<(f64, f64)>),
     Close,
     DwdLoaded(Result<Vec<dwd::Frame>>),
     RvLoaded(Result<Vec<rainviewer::Frame>>),
@@ -225,6 +233,7 @@ pub fn start(setup: Setup, events: impl Fn(Event) + Send + 'static) -> Result<Ha
         temps_retry: None,
         heat_drawn: None,
         heat_shown: false,
+        thumbs: None,
         moved_at: None,
         rv_due: None,
         idle_since: None,
@@ -288,6 +297,7 @@ struct Worker {
     /// The view the heatmap was last drawn for.
     heat_drawn: Option<View>,
     heat_shown: bool,
+    thumbs: Option<Thumbs>,
     moved_at: Option<Instant>,
     rv_due: Option<Instant>,
     idle_since: Option<Instant>,
@@ -552,10 +562,14 @@ impl Worker {
                     }));
                 }
             }
+            Command::MapThumbs(place) => self.thumbs = place.map(|(lon, lat)| Thumbs::new(lon, lat)),
             Command::TileDone { base, result } => match result {
                 Ok(()) => {
                     if base {
                         self.base_dirty = true;
+                        if let Some(thumbs) = &mut self.thumbs {
+                            thumbs.tile_arrived();
+                        }
                     } else {
                         self.rain_dirty = true;
                         self.report_rv_progress();
@@ -933,6 +947,19 @@ impl Worker {
         });
     }
 
+    fn draw_thumbs(&mut self) {
+        let Some(thumbs) = self.thumbs.as_mut().filter(|t| t.due()) else {
+            return;
+        };
+        let (pictures, wanted) = thumbs.render(&self.store, self.config.carto_key.as_deref(), self.config.dark);
+        for (index, picture) in pictures {
+            self.emit(Event::MapThumb { index, picture });
+        }
+        for (layer, z, x, y) in wanted {
+            self.request(&layer, z, x, y, true);
+        }
+    }
+
     /// After a zoom the cells are new: the old picture stays on its place on the map until most of the new one is known.
     fn draw_heat(&mut self) {
         if !self.config.heat_layer || self.heat_drawn == Some(self.view) {
@@ -963,6 +990,7 @@ impl Worker {
         }
         self.preload_after_move();
         self.fetch_temps();
+        self.draw_thumbs();
         if self.wind_at.is_some_and(|t| t.elapsed() >= WIND_MAX_AGE) && self.wind_due.is_none() {
             self.wind_due = Some(Instant::now());
         }

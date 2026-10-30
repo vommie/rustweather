@@ -67,6 +67,7 @@ pub struct App {
     pub radar_shown: Cell<(bool, bool, bool)>,
     pub layer_extents: RefCell<[Option<rustweather_core::map::Extent>; 3]>,
     pub heat_extent: Cell<Option<rustweather_core::map::Extent>>,
+    pub map_thumbs: RefCell<Vec<slint::Image>>,
 }
 
 thread_local! {
@@ -521,6 +522,10 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         radar_shown: Cell::new((false, false, false)),
         layer_extents: RefCell::new([None; 3]),
         heat_extent: Cell::new(None),
+        map_thumbs: RefCell::new(vec![
+            slint::Image::default();
+            rustweather_core::settings::Basemap::ALL.len()
+        ]),
     });
     APP.with(|a| *a.borrow_mut() = Some(Rc::clone(&app)));
 

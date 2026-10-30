@@ -7,8 +7,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- The radar has a map picker right on the map: satellite, satellite without clouds, topographic, streets and terrain, shaded relief,
-  TopPlus, light and dark gray, OpenStreetMap, the own map and CARTO. It replaces the setting; every map but CARTO works without a key.
+- The radar has a map picker right on the map, with a small preview of every map: satellite, satellite without clouds, topographic, streets and terrain, shaded relief,
+  TopPlus, light and dark gray, OpenStreetMap, the own map and CARTO. It replaces the setting. Every map but CARTO works without a key; CARTO stays grayed out until there is one, and its tooltip says why.
 - A Network page in the settings shows every request live, with statistics per server: running now, last minute, today against the
   service's limit, errors, data and average time. API keys never show.
 - A temperature heatmap colors the whole map, with its scale in the legend. It shares its values with the temperature labels.

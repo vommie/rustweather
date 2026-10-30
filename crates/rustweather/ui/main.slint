@@ -4,7 +4,7 @@ import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
 import { Card, Icon, IconButton, StatusLine, Tile, TipLayer, Toast } from "controls.slint";
-import { AlertData, CityLabel, DayData, FrameCell, HourData, LayerRect, NowData, RainBar, TempLabel, ViewChip } from "types.slint";
+import { MapChoice, AlertData, CityLabel, DayData, FrameCell, HourData, LayerRect, NowData, RainBar, TempLabel, ViewChip } from "types.slint";
 import { NowPage } from "now_page.slint";
 import { ForecastPage } from "forecast_page.slint";
 import { RadarPage } from "radar_page.slint";
@@ -12,7 +12,7 @@ import { DesktopRow, HealthRow, PlaceRow, SettingsData, SettingsWindow, TrafficE
 import { FlyoutWindow } from "flyout.slint";
 import { MiniWindow } from "mini.slint";
 
-export { Theme, SettingsWindow, SettingsData, PlaceRow, DesktopRow, HealthRow, TrafficEntry, TrafficHost, FlyoutWindow, MiniWindow, NowData, HourData, DayData, AlertData, FrameCell, CityLabel, LayerRect, RainBar, TempLabel, ViewChip }
+export { Theme, MapChoice, SettingsWindow, SettingsData, PlaceRow, DesktopRow, HealthRow, TrafficEntry, TrafficHost, FlyoutWindow, MiniWindow, NowData, HourData, DayData, AlertData, FrameCell, CityLabel, LayerRect, RainBar, TempLabel, ViewChip }
 
 component RailButton inherits Rectangle {
     in property <image> icon;
@@ -129,7 +129,7 @@ export component MainWindow inherits Window {
     in property <image> heat;
     in property <LayerRect> heat-rect;
     in property <[string]> heat-ticks;
-    in property <[string]> maps;
+    in property <[MapChoice]> maps;
     in property <int> map-current;
     in property <string> map-credit;
     in property <[TempLabel]> temps;
@@ -157,6 +157,7 @@ export component MainWindow inherits Window {
     callback banner-act();
     callback warnings-close();
     callback pick-map(int);
+    callback map-picker(bool);
 
     forward-focus: radar-scope;
     HorizontalLayout {
@@ -264,6 +265,7 @@ export component MainWindow inherits Window {
                     banner-act => { root.banner-act(); }
                     warnings-close => { root.warnings-close(); }
                     pick-map(i) => { root.pick-map(i); }
+                    map-picker(open) => { root.map-picker(open); }
                 }
                 if root.page == 3: AlertsPage { alerts: root.alerts; }
                 if root.toast != "": Toast { x: parent.width - self.width - 12px; y: 42px; text: root.toast; level: root.toast-level; }

@@ -3,8 +3,8 @@
 import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
-import { Chip, IconButton, Slider, ThinBar, Banner, Icon } from "controls.slint";
-import { AlertData, CityLabel, FrameCell, LayerRect, RainBar, TempLabel, ViewChip } from "types.slint";
+import { Chip, IconButton, Slider, ThinBar, Banner, Icon, TipArea } from "controls.slint";
+import { AlertData, CityLabel, FrameCell, LayerRect, MapChoice, RainBar, TempLabel, ViewChip } from "types.slint";
 
 export component Timeline inherits Rectangle {
     in property <[FrameCell]> frames;
@@ -97,7 +97,7 @@ export component RadarPage inherits Rectangle {
     in property <bool> layer-wind;
     in property <bool> layer-temps;
     in property <bool> layer-heat;
-    in property <[string]> maps;
+    in property <[MapChoice]> maps;
     in property <int> map-current;
     in property <string> map-credit;
     in property <[TempLabel]> temps;
@@ -123,7 +123,9 @@ export component RadarPage inherits Rectangle {
     callback banner-act();
     callback warnings-close();
     callback pick-map(int);
+    callback map-picker(bool);
     property <bool> map-open;
+    changed map-open => { root.map-picker(self.map-open); }
     property <length> top: root.banner != "" ? 42px : 8px;
     background: Theme.map-back;
     clip: true;
@@ -235,7 +237,7 @@ export component RadarPage inherits Rectangle {
         HorizontalLayout {
             spacing: 4px;
             alignment: start;
-            Chip { text: root.maps[root.map-current]; tip: "Choose the map: satellite, topographic, OpenStreetMap and more"; icon: Icons.map; has-icon: true; checked: root.map-open; clicked => { root.map-open = !root.map-open; } }
+            Chip { text: root.maps[root.map-current].name; tip: "Choose the map: satellite, topographic, OpenStreetMap and more"; icon: Icons.map; has-icon: true; checked: root.map-open; clicked => { root.map-open = !root.map-open; } }
             Chip { text: "Warnings"; tip: "Official DWD warnings by district: the stronger, the darker. Click an area for the full text"; icon: Icons.alert-triangle; has-icon: true; checked: root.layer-alerts; clicked => { root.toggle-layer(0); } }
             Chip { text: root.clouds-label; tip: "Satellite picture of the clouds. New pictures come every three hours; the time is the picture's"; icon: Icons.cloud; has-icon: true; checked: root.layer-clouds; clicked => { root.toggle-layer(1); } }
             Chip { text: "Lightning"; tip: "Lightning strikes of the last hours, from the DWD"; icon: Icons.bolt; has-icon: true; checked: root.layer-lightning; clicked => { root.toggle-layer(2); } }
@@ -248,29 +250,49 @@ export component RadarPage inherits Rectangle {
     if root.map-open: Rectangle {
         x: 8px;
         y: root.top + 64px;
-        width: 210px;
-        height: list.preferred-height;
+        width: 3 * 116px + 2 * 6px + 16px;
+        height: 4 * 88px + 3 * 6px + 16px;
         background: Theme.surface;
         border-width: 1px;
         border-color: Theme.surface-selected;
-        border-radius: 6px;
+        border-radius: 8px;
         TouchArea { }
-        list := VerticalLayout {
-            padding: 4px;
-            for m[i] in root.maps: Rectangle {
-                height: 26px;
+        for m[i] in root.maps: Rectangle {
+            x: 8px + mod(i, 3) * 122px;
+            y: 8px + floor(i / 3) * 94px;
+            width: 116px;
+            height: 88px;
+            border-radius: 6px;
+            border-width: i == root.map-current ? 2px : 1px;
+            border-color: i == root.map-current ? Theme.primary : pick.has-hover && !m.needs-key ? Theme.text-muted : Theme.border;
+            background: i == root.map-current ? Theme.surface.mix(Theme.primary, 0.75) : pick.has-hover && !m.needs-key ? Theme.surface-hover : transparent;
+            Rectangle {
+                x: 3px;
+                y: 3px;
+                width: parent.width - 6px;
+                height: 64px;
                 border-radius: 4px;
-                background: i == root.map-current ? Theme.surface.mix(Theme.primary, 0.75) : row.has-hover ? Theme.surface-hover : transparent;
-                Text {
-                    x: 8px;
-                    text: m;
-                    color: i == root.map-current ? Theme.primary : Theme.text;
-                    font-size: 12px;
-                    font-weight: i == root.map-current ? 600 : 400;
-                }
-                row := TouchArea {
-                    mouse-cursor: pointer;
-                    clicked => {
+                clip: true;
+                background: Theme.surface-hover;
+                Image { width: 100%; height: 100%; source: m.thumb; image-fit: cover; opacity: m.needs-key ? 0.3 : 1; }
+            }
+            Text {
+                x: 6px;
+                y: 68px;
+                width: parent.width - 12px;
+                height: 18px;
+                text: m.name;
+                color: m.needs-key ? Theme.text-disabled : i == root.map-current ? Theme.primary : Theme.text;
+                font-size: 11px;
+                font-weight: i == root.map-current ? 600 : 400;
+                overflow: elide;
+                vertical-alignment: center;
+            }
+            pick := TipArea {
+                tip: m.needs-key ? "This map needs a CARTO API key. Add one in the settings, on the page Sources" : "";
+                mouse-cursor: m.needs-key ? MouseCursor.not-allowed : MouseCursor.pointer;
+                clicked => {
+                    if !m.needs-key {
                         root.map-open = false;
                         root.pick-map(i);
                     }
