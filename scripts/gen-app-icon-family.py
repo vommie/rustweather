@@ -62,8 +62,9 @@ def rays(cx, cy, inner, outer, count=8, skip=()):
 
 
 def sun_cloud():
-    sun = stroked([f'<circle cx="48" cy="46" r="13"/>', *rays(48, 46, 21, 29, skip=(0, 1))], 7)
-    cloud = "M50 98a15 15 0 0 1-2-30 20 20 0 0 1 38-5 17.500 17.500 0 0 1 0 35Z"
+    # Everything keeps at least 5 units to the edge of the light field, the halo included.
+    sun = stroked(['<circle cx="52" cy="53" r="11"/>', *rays(52, 53, 18, 25, skip=(0, 1))], 7)
+    cloud = "M50 99a14 14 0 0 1-2-28 19 19 0 0 1 36-5 16.500 16.500 0 0 1 0 33Z"
     return sun + stroked([path(cloud)], 7, FIELD)
 
 
