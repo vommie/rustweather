@@ -118,6 +118,8 @@ impl Default for Place {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct Tray {
+    /// RustWeather's card while the pointer rests on the icon, instead of the panel's tooltip.
+    pub hover_card: bool,
     pub show_rain_dot: bool,
     pub show_alert: bool,
     pub show_stale: bool,
@@ -140,6 +142,7 @@ pub struct Tray {
 impl Default for Tray {
     fn default() -> Self {
         Self {
+            hover_card: false,
             show_rain_dot: true,
             show_alert: true,
             show_stale: true,

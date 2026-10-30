@@ -7,7 +7,7 @@ import { Card, Choice, Icon, IconButton, SettingRow, Slider, Switch, TextButton,
 
 export struct SettingsData {
     theme: int, refresh: int, autostart: bool, log-level: int, station-url: string,
-    tile-bg: string, tile-fg: string,
+    tile-bg: string, tile-fg: string, hover-card: bool, hover-usable: bool,
     show-rain: bool, show-alert: bool, show-stale: bool, show-trend: bool,
     line-feels: bool, line-range: bool, line-rain: bool, line-alerts: bool, line-wind: bool, line-humidity: bool,
     line-sun: bool, line-age: bool, line-next: bool,
@@ -82,6 +82,7 @@ export component SettingsWindow inherits Window {
     callback clear-cache();
     callback open-cache();
     callback offline-map();
+    callback test-notification();
     callback install-desktop();
     callback remove-desktop();
     public function copy-text(text: string) {
@@ -160,6 +161,18 @@ export component SettingsWindow inherits Window {
             }
             if root.page == 2: Page {
                 title: "Tray";
+                Card {
+                    title: "When the pointer rests on the icon";
+                    Sw {
+                        label: "Show the weather card";
+                        detail: root.data.hover-usable
+                            ? "Instead of the panel's tooltip. Click the icon once, so RustWeather knows where it sits."
+                            : "Needs X11: under Wayland a program cannot see the pointer on the panel.";
+                        key: "hover-card";
+                        on: root.data.hover-card;
+                        changed-to(k, v) => { root.set-bool(k, v); }
+                    }
+                }
                 Card {
                     title: "On the icon";
                     Sw { label: "Blue dot: rain within the hour"; key: "show-rain"; on: root.data.show-rain; changed-to(k, v) => { root.set-bool(k, v); } }
@@ -258,8 +271,12 @@ export component SettingsWindow inherits Window {
                     Sw { label: "Thunderstorms nearby"; key: "al-storm"; on: root.data.al-storm; changed-to(k, v) => { root.set-bool(k, v); } }
                     Sw { label: "Frost tonight"; key: "al-frost"; on: root.data.al-frost; changed-to(k, v) => { root.set-bool(k, v); } }
                     Sw { label: "Heat"; key: "al-heat"; on: root.data.al-heat; changed-to(k, v) => { root.set-bool(k, v); } }
-                    SettingRow { label: "DWD warnings from"; Choice { items: ["Every warning", "Markant weather", "Severe weather", "Extreme only"]; current: root.data.al-level; selected(i) => { root.set-int("al-level", i); } } }
+                    SettingRow { label: "DWD warnings from"; Choice { items: ["Every warning", "Significant weather", "Severe weather", "Extreme only"]; current: root.data.al-level; selected(i) => { root.set-int("al-level", i); } } }
                     SettingRow { label: "Rain warning ahead"; detail: "\{Math.round(root.data.al-lead)} minutes"; Slider { width: 200px; minimum: 5; maximum: 60; value: root.data.al-lead; moved(v) => { root.set-float("al-lead", v); } } }
+                }
+                HorizontalLayout {
+                    alignment: start;
+                    TextButton { text: "Send a test notification"; icon: Icons.bell; has-icon: true; clicked => { root.test-notification(); } }
                 }
                 Card {
                     title: "Quiet";

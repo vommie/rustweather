@@ -107,6 +107,18 @@ fn quiet(settings: &Alerts, hour: u32) -> bool {
         }
 }
 
+/// Shows a notification through the same way the real ones take.
+pub fn show(title: &str, body: &str) -> Result<(), notify_rust::error::Error> {
+    notify_rust::Notification::new()
+        .appname("RustWeather")
+        .icon("rustweather")
+        .hint(notify_rust::Hint::DesktopEntry(rustweather_core::APP_ID.to_owned()))
+        .summary(title)
+        .body(body)
+        .show()
+        .map(|_| ())
+}
+
 #[derive(Default)]
 pub struct Notifier {
     said: HashSet<String>,
@@ -127,13 +139,7 @@ impl Notifier {
             if self.said.contains(&message.id) || (hushed && !(message.severe && settings.severe_ignores_quiet)) {
                 continue;
             }
-            let shown = notify_rust::Notification::new()
-                .appname("RustWeather")
-                .icon("rustweather")
-                .hint(notify_rust::Hint::DesktopEntry(rustweather_core::APP_ID.to_owned()))
-                .summary(&message.title)
-                .body(&message.body)
-                .show();
+            let shown = show(&message.title, &message.body);
             if let Err(e) = shown {
                 tracing::warn!(error = %e, "[Alerts] Could not show a notification");
             }

@@ -28,6 +28,12 @@ pub fn away() -> bool {
     false
 }
 
+/// The pointer's position on the X11 screen. A connection is passed in, because this runs several times a second.
+pub fn pointer(conn: &x11rb::rust_connection::RustConnection, root: u32) -> Option<(i32, i32)> {
+    let reply = conn.query_pointer(root).ok()?.reply().ok()?;
+    Some((i32::from(reply.root_x), i32::from(reply.root_y)))
+}
+
 /// True when the active X11 window is fullscreen. Wayland has no way to ask; there Plasma's own setting applies.
 pub fn fullscreen() -> bool {
     check().unwrap_or(false)
@@ -54,4 +60,52 @@ fn check() -> Option<bool> {
         .reply()
         .ok()?;
     Some(states.value32()?.any(|a| a == full))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+    use std::time::Duration;
+
+    use super::*;
+
+    /// A stand-in for the desktop's screen saver service: it is active while a file exists.
+    struct FakeScreenSaver(PathBuf);
+
+    #[zbus::interface(name = "org.freedesktop.ScreenSaver")]
+    impl FakeScreenSaver {
+        fn get_active(&self) -> bool {
+            self.0.exists()
+        }
+    }
+
+    /// Run by hand on a private bus: `dbus-run-session`, with `RW_FAKE_LOCK` naming the file.
+    #[test]
+    #[ignore = "serves a fake screen saver for a test by hand"]
+    fn serve_fake_screen_saver() {
+        let file = PathBuf::from(std::env::var("RW_FAKE_LOCK").unwrap());
+        let _bus = zbus::blocking::connection::Builder::session()
+            .unwrap()
+            .name("org.freedesktop.ScreenSaver")
+            .unwrap()
+            .serve_at("/ScreenSaver", FakeScreenSaver(file))
+            .unwrap()
+            .build()
+            .unwrap();
+        std::thread::sleep(Duration::from_secs(60));
+    }
+
+    /// Run by hand while a fullscreen window has the focus.
+    #[test]
+    #[ignore = "needs a fullscreen window"]
+    fn sees_a_fullscreen_window() {
+        assert!(fullscreen());
+    }
+
+    /// Run by hand while a normal window has the focus.
+    #[test]
+    #[ignore = "needs a normal window"]
+    fn sees_a_normal_window() {
+        assert!(!fullscreen());
+    }
 }

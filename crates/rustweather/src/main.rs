@@ -3,6 +3,7 @@
 mod alerts;
 mod app;
 mod desktop;
+mod hover;
 mod instance;
 mod logging;
 mod models;
