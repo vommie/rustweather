@@ -13,6 +13,7 @@ use super::dwd::{self, Lut, Projector};
 use super::motion::{self, Field};
 use super::palette::{self, Ramp};
 use super::rainviewer;
+use super::wind::{self, Field as WindField, Flow};
 use super::{FrameInfo, FrameState};
 use crate::error::{Error, Result};
 use crate::http::Http;
@@ -24,6 +25,10 @@ const REFRESH: Duration = Duration::from_secs(5 * 60);
 const SLOW_AFTER: Duration = Duration::from_secs(6);
 const RETRIES: [u64; 4] = [10, 30, 60, 300];
 const OVERLAY_DELAY: Duration = Duration::from_millis(350);
+const WIND_FRAME: Duration = Duration::from_millis(33);
+const WIND_DELAY: Duration = Duration::from_millis(600);
+const WIND_MAX_AGE: Duration = Duration::from_secs(15 * 60);
+const WIND_RETRY: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
@@ -38,6 +43,7 @@ pub struct Config {
     pub alerts_layer: bool,
     pub clouds_layer: bool,
     pub lightning_layer: bool,
+    pub wind_layer: bool,
 }
 
 #[derive(Clone)]
@@ -84,6 +90,7 @@ pub enum Event {
     Overlay(Option<Picture>),
     Rain(Picture),
     Labels(Option<Picture>),
+    Wind(Option<Picture>),
     Cities(Vec<(String, f32, f32)>),
     Timeline {
         frames: Vec<FrameInfo>,
@@ -106,6 +113,8 @@ pub enum Command {
     Position(f32),
     Config(Box<Config>),
     Active(bool),
+    /// The screen is locked: nothing is fetched or animated until it is unlocked.
+    Away(bool),
     Reload,
     Probe {
         lon: f64,
@@ -121,6 +130,9 @@ pub enum Command {
         result: Result<Vec<u8>>,
     },
     KeyChecked(bool),
+    WindLoaded {
+        result: Result<WindField>,
+    },
     TileDone {
         base: bool,
         result: Result<()>,
@@ -177,6 +189,13 @@ pub fn start(setup: Setup, events: impl Fn(Event) + Send + 'static) -> Result<Ha
         layer_failed: false,
         key_checked: None,
         overlay_due: None,
+        away: false,
+        wind: None,
+        flow: None,
+        wind_at: None,
+        wind_busy: false,
+        wind_due: None,
+        wind_frame: Instant::now(),
         slow_said: false,
         rain_dirty: true,
         base_dirty: true,
@@ -220,6 +239,13 @@ struct Worker {
     layer_failed: bool,
     key_checked: Option<String>,
     overlay_due: Option<Instant>,
+    away: bool,
+    wind: Option<WindField>,
+    flow: Option<Flow>,
+    wind_at: Option<Instant>,
+    wind_busy: bool,
+    wind_due: Option<Instant>,
+    wind_frame: Instant,
     slow_said: bool,
     rain_dirty: bool,
     base_dirty: bool,
@@ -323,8 +349,11 @@ impl Worker {
     }
 
     fn next_timeout(&self) -> Duration {
-        if !self.active {
+        if !self.active || self.away {
             return Duration::from_secs(3600);
+        }
+        if self.wind_on() {
+            return WIND_FRAME;
         }
         match self.overlay_due {
             Some(t) => t.saturating_duration_since(Instant::now()).min(Duration::from_secs(1)),
@@ -343,6 +372,8 @@ impl Worker {
                     self.base_dirty = true;
                     self.rain_dirty = true;
                     self.overlay_due = Some(Instant::now() + OVERLAY_DELAY);
+                    self.flow = None;
+                    self.wind_due = Some(Instant::now() + WIND_DELAY);
                     if self.kind() != before {
                         self.load_cached();
                         self.fetch();
@@ -364,7 +395,12 @@ impl Worker {
                 self.base_dirty = true;
                 self.rain_dirty = true;
                 self.overlay_due = Some(Instant::now());
+                self.wind_due = Some(Instant::now());
                 self.check_key();
+                if !self.config.wind_layer {
+                    self.flow = None;
+                    self.emit(Event::Wind(None));
+                }
                 if source_changed {
                     self.fetch();
                     self.publish_timeline();
@@ -378,6 +414,9 @@ impl Worker {
                     self.motions = Vec::new();
                     self.rv = Vec::new();
                     self.lut = None;
+                    self.flow = None;
+                    self.wind = None;
+                    self.wind_at = None;
                 }
                 if active {
                     self.load_cached();
@@ -385,12 +424,14 @@ impl Worker {
                     self.base_dirty = true;
                     self.rain_dirty = true;
                     self.overlay_due = Some(Instant::now());
+                    self.wind_due = Some(Instant::now());
                     self.check_key();
                     if self.last_fetch.is_none_or(|t| t.elapsed() >= REFRESH) {
                         self.fetch();
                     }
                 }
             }
+            Command::Away(away) => self.away = away,
             Command::Reload => {
                 self.store.forget_failures();
                 self.layer_failed = false;
@@ -439,6 +480,20 @@ impl Worker {
                 Ok(_) => {}
                 Err(e) => tracing::warn!(error = %e, "[Radar] A map layer failed"),
             },
+            Command::WindLoaded { result } => {
+                self.wind_busy = false;
+                self.wind_at = Some(Instant::now());
+                match result {
+                    Ok(field) => self.wind = Some(field),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "[Radar] Wind failed");
+                        self.emit(Event::Notice(Notice::Fallback {
+                            text: "No wind data right now".into(),
+                        }));
+                        self.wind_due = Some(Instant::now() + WIND_RETRY);
+                    }
+                }
+            }
             Command::KeyChecked(valid) => {
                 if !valid && !self.layer_failed {
                     self.layer_failed = true;
@@ -623,10 +678,57 @@ impl Worker {
         });
     }
 
-    fn tick(&mut self) {
-        if !self.active {
+    fn wind_on(&self) -> bool {
+        self.active && !self.away && self.config.wind_layer
+    }
+
+    /// Asks for a new grid when the view left the old one, or when it is too old.
+    fn fetch_wind(&mut self) {
+        if !self.wind_on() || self.wind_busy || self.wind_due.is_none_or(|t| t > Instant::now()) {
             return;
         }
+        let fresh = self.wind_at.is_some_and(|t| t.elapsed() < WIND_MAX_AGE);
+        self.wind_due = None;
+        if fresh && self.wind.as_ref().is_some_and(|f| f.covers(&self.view)) {
+            return;
+        }
+        self.wind_busy = true;
+        let (http, tx, view) = (self.http.clone(), self.tx.clone(), self.view);
+        self.runtime.spawn(async move {
+            let _ = tx.send(Command::WindLoaded {
+                result: wind::fetch(&http, &view).await,
+            });
+        });
+    }
+
+    fn animate_wind(&mut self) {
+        if !self.wind_on() || self.wind_frame.elapsed() < WIND_FRAME {
+            return;
+        }
+        self.wind_frame = Instant::now();
+        let Some(field) = &self.wind else {
+            return;
+        };
+        let view = self.view;
+        let flow = self.flow.get_or_insert_with(|| Flow::new(&view));
+        flow.step(&view, field, self.config.dark);
+        let picture = Picture {
+            width: flow.width,
+            height: flow.height,
+            rgba: Arc::new(flow.pixels().to_vec()),
+        };
+        self.emit(Event::Wind(Some(picture)));
+    }
+
+    fn tick(&mut self) {
+        if !self.active || self.away {
+            return;
+        }
+        if self.wind_at.is_some_and(|t| t.elapsed() >= WIND_MAX_AGE) && self.wind_due.is_none() {
+            self.wind_due = Some(Instant::now());
+        }
+        self.fetch_wind();
+        self.animate_wind();
         if self.overlay_due.is_some_and(|t| t <= Instant::now()) {
             self.overlay_due = None;
             self.fetch_overlay(true);

@@ -48,6 +48,7 @@ pub fn on_event(app: &App, event: Event) {
             app.flyout.set_rain(img);
         }
         Event::Labels(p) => w.set_labels(p.as_ref().map_or_else(Image::default, image)),
+        Event::Wind(p) => w.set_wind(p.as_ref().map_or_else(Image::default, image)),
         Event::Cities(list) => {
             let scale = w.window().scale_factor();
             let cities: Vec<CityLabel> = list
@@ -285,6 +286,7 @@ fn show_layers(app: &App) {
     app.main.set_layer_alerts(ui.layer_alerts);
     app.main.set_layer_clouds(ui.layer_clouds);
     app.main.set_layer_lightning(ui.layer_lightning);
+    app.main.set_layer_wind(ui.layer_wind);
 }
 
 /// Places the small panel above the icon, inside the screen. Wayland decides by itself where it goes.
@@ -447,7 +449,8 @@ pub fn wire(app: &std::rc::Rc<App>) {
             match layer {
                 0 => ui.layer_alerts = !ui.layer_alerts,
                 1 => ui.layer_clouds = !ui.layer_clouds,
-                _ => ui.layer_lightning = !ui.layer_lightning,
+                2 => ui.layer_lightning = !ui.layer_lightning,
+                _ => ui.layer_wind = !ui.layer_wind,
             }
         }
         show_layers(&app);

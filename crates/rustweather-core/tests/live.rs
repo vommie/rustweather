@@ -32,6 +32,23 @@ async fn projection_agrees_with_bright_sky() {
 
 #[tokio::test]
 #[ignore = "needs the network"]
+async fn wind_grid_answers() {
+    let http = Http::new().unwrap();
+    let view = rustweather_core::map::View {
+        lon: 10.0,
+        lat: 51.0,
+        zoom: 5.6,
+        width: 1000,
+        height: 700,
+    };
+    let field = rustweather_core::radar::wind::fetch(&http, &view).await.unwrap();
+    assert!(field.covers(&view));
+    println!("wind at Berlin: {:?}", field.at(13.4, 52.5));
+    assert!(field.at(13.4, 52.5).is_some());
+}
+
+#[tokio::test]
+#[ignore = "needs the network"]
 async fn sources_answer() {
     let http = Http::new().unwrap();
     let current = brightsky::current(&http, &place()).await.unwrap();
