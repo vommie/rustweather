@@ -1,10 +1,15 @@
-//! Is someone there? No fetching behind a locked screen, and fullscreen programs are not interrupted.
+//! Is someone there? Nothing is fetched behind a locked screen or a fullscreen program, and fullscreen programs are not interrupted.
 
 use x11rb::connection::Connection as _;
 use x11rb::protocol::xproto::{AtomEnum, ConnectionExt as _};
 
-/// True while the screen saver or lock screen runs.
+/// True while the screen saver or lock screen runs. When nothing answers it counts as "someone is there": a desktop without these services
+/// must still show its temperature.
 pub fn away() -> bool {
+    screen_saver_active() || session_locked()
+}
+
+fn screen_saver_active() -> bool {
     let Ok(bus) = zbus::blocking::Connection::session() else {
         return false;
     };
@@ -26,6 +31,21 @@ pub fn away() -> bool {
         }
     }
     false
+}
+
+/// What the system itself knows, for lock screens that have no screen saver service.
+fn session_locked() -> bool {
+    let locked = || -> zbus::Result<bool> {
+        let bus = zbus::blocking::Connection::system()?;
+        let session = zbus::blocking::Proxy::new(
+            &bus,
+            "org.freedesktop.login1",
+            "/org/freedesktop/login1/session/auto",
+            "org.freedesktop.login1.Session",
+        )?;
+        session.get_property("LockedHint")
+    };
+    locked().unwrap_or(false)
 }
 
 /// The pointer's position on the X11 screen. A connection is passed in, because this runs several times a second.

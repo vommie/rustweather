@@ -22,11 +22,13 @@ use tokio::sync::watch;
 use crate::alerts::Notifier;
 use crate::desktop::Desktop;
 use crate::tray::{self, TrayData, TrayEvent};
+use crate::weather::Presence;
 use crate::weather::{self, Control, Snapshot};
 use crate::{
     Cli, FlyoutWindow, MainWindow, MiniWindow, SettingsWindow, Theme, instance, logging, models, presence, radar_ui,
     settings_ui,
 };
+use slint::winit_030::WinitWindowAccessor as _;
 
 pub struct App {
     pub main: MainWindow,
@@ -67,6 +69,9 @@ pub struct App {
     pub radar_shown: Cell<(bool, bool, bool)>,
     pub layer_extents: RefCell<[Option<rustweather_core::map::Extent>; 3]>,
     pub heat_extent: Cell<Option<rustweather_core::map::Extent>>,
+    /// The screen is locked; a fullscreen window has the focus.
+    pub outside: Cell<(bool, bool)>,
+    pub presence: watch::Sender<Presence>,
     pub map_thumbs: RefCell<Vec<slint::Image>>,
 }
 
@@ -82,6 +87,15 @@ pub fn with_app(f: impl FnOnce(&Rc<App>) + Send + 'static) {
             f(&app);
         }
     });
+}
+
+/// A minimized window is not on screen, even though it is open.
+fn on_screen(window: &slint::Window) -> bool {
+    window.is_visible()
+        && !window
+            .with_winit_window(|w| w.is_minimized())
+            .flatten()
+            .unwrap_or(false)
 }
 
 impl App {
@@ -148,14 +162,37 @@ impl App {
         self.radar.send(Command::Config(Box::new(self.radar_config())));
     }
 
+    /// What the app may fetch: this follows the screen and its own windows.
+    fn update_presence(&self) {
+        let (locked, fullscreen) = self.outside.get();
+        let own_fullscreen = self.main.get_full() && on_screen(self.main.window());
+        let quiet = locked || (fullscreen && !own_fullscreen);
+        let in_use = on_screen(self.main.window())
+            || on_screen(self.mini.window())
+            || on_screen(self.flyout.window())
+            || on_screen(self.settings_window.window());
+        let presence = match (quiet, in_use) {
+            (true, _) => Presence::Quiet,
+            (false, true) => Presence::Active,
+            (false, false) => Presence::Background,
+        };
+        self.presence
+            .send_if_modified(|old| std::mem::replace(old, presence) != presence);
+        self.radar.send(Command::Away(quiet));
+    }
+
     /// The radar loads only while it is on screen. A view that opens starts playing: the weather card always, the others by setting.
     pub fn update_radar_activity(&self) {
+        self.update_presence();
         let now = (
-            self.main.window().is_visible() && self.main.get_page() == 2,
-            self.mini.window().is_visible(),
-            self.flyout.window().is_visible(),
+            on_screen(self.main.window()) && self.main.get_page() == 2,
+            on_screen(self.mini.window()),
+            on_screen(self.flyout.window()),
         );
         let before = self.radar_shown.replace(now);
+        if before == now {
+            return;
+        }
         let active = now.0 || now.1 || now.2;
         self.radar.send(Command::Active(active));
         if !active {
@@ -430,6 +467,8 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         .worker_threads(3)
         .enable_all()
         .build()?;
+    // Quiet until the first look at the screen, a moment after the start.
+    let (presence_tx, presence_rx) = watch::channel(Presence::Quiet);
     let http = Http::new()?;
     http.traffic().persist_to(paths.cache.join("traffic.json"));
     let main = MainWindow::new()?;
@@ -522,6 +561,8 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         radar_shown: Cell::new((false, false, false)),
         layer_extents: RefCell::new([None; 3]),
         heat_extent: Cell::new(None),
+        outside: Cell::new((false, false)),
+        presence: presence_tx,
         map_thumbs: RefCell::new(vec![
             slint::Image::default();
             rustweather_core::settings::Basemap::ALL.len()
@@ -541,6 +582,7 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         app.http.clone(),
         app.paths.cache.clone(),
         settings_rx,
+        presence_rx,
         start,
         |snapshot| {
             with_app(move |app| {
@@ -553,13 +595,16 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     *app.control.borrow_mut() = Some(control);
     app.show_weather();
 
-    // Behind a locked screen the radar neither fetches nor animates; it catches up when the user is back.
-    let away_handle = app.runtime.handle().clone();
-    let away_radar = app.radar.clone();
-    away_handle.spawn(async move {
+    // Behind a locked screen or a fullscreen program nothing is fetched; the app catches up when the user is back.
+    app.runtime.handle().spawn(async move {
         loop {
-            let away = tokio::task::spawn_blocking(presence::away).await.unwrap_or(false);
-            away_radar.send(Command::Away(away));
+            let state = tokio::task::spawn_blocking(|| (presence::away(), presence::fullscreen()))
+                .await
+                .unwrap_or((false, false));
+            with_app(move |app| {
+                app.outside.set(state);
+                app.update_radar_activity();
+            });
             tokio::time::sleep(Duration::from_secs(10)).await;
         }
     });
