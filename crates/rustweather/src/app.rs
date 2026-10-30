@@ -14,7 +14,8 @@ use rustweather_core::radar::engine::{self, Command, Config, Handle, Setup};
 use rustweather_core::secrets::{self, Secrets};
 use rustweather_core::settings::{Basemap, Settings};
 use rustweather_core::ui_state::UiState;
-use rustweather_core::{legacy, store};
+use rustweather_core::{APP_ID, legacy, store};
+use slint::winit_030::winit::window::WindowAttributes;
 use slint::{ComponentHandle as _, ModelRc, VecModel};
 use tokio::sync::watch;
 
@@ -297,8 +298,18 @@ impl App {
     }
 }
 
+/// The window class: the desktop file and the task manager match on it, so the taskbar shows the right icon.
+fn with_window_class(attributes: WindowAttributes) -> WindowAttributes {
+    let attributes =
+        slint::winit_030::winit::platform::x11::WindowAttributesExtX11::with_name(attributes, APP_ID, "rustweather");
+    slint::winit_030::winit::platform::wayland::WindowAttributesExtWayland::with_name(attributes, APP_ID, "rustweather")
+}
+
 fn select_backend() -> Result<(), slint::PlatformError> {
-    slint::BackendSelector::new().backend_name("winit".into()).select()
+    slint::BackendSelector::new()
+        .backend_name("winit".into())
+        .with_winit_window_attributes_hook(with_window_class)
+        .select()
 }
 
 fn view_from(ui: &UiState) -> View {

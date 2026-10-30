@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=RustWeather
+GenericName=Weather
+Comment=The temperature in your tray and a weather radar
+Exec=rustweather
+TryExec=rustweather
+Icon=rustweather
+Terminal=false
+Categories=Utility;
+Keywords=weather;radar;rain;temperature;forecast;tray;
+StartupWMClass=io.github.vommie.rustweather
+StartupNotify=true
+SingleMainWindow=true
