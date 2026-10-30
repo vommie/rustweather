@@ -23,7 +23,8 @@ use crate::alerts::Notifier;
 use crate::tray::{self, TrayData, TrayEvent};
 use crate::weather::{self, Control, Snapshot};
 use crate::{
-    Cli, FlyoutWindow, MainWindow, MiniWindow, SettingsWindow, Theme, instance, logging, models, radar_ui, settings_ui,
+    Cli, FlyoutWindow, MainWindow, MiniWindow, SettingsWindow, Theme, instance, logging, models, presence, radar_ui,
+    settings_ui,
 };
 
 pub struct App {
@@ -126,6 +127,7 @@ impl App {
             alerts_layer: ui.layer_alerts,
             clouds_layer: ui.layer_clouds,
             lightning_layer: ui.layer_lightning,
+            wind_layer: ui.layer_wind,
         }
     }
 
@@ -392,6 +394,7 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         alerts_layer: ui.layer_alerts,
         clouds_layer: ui.layer_clouds,
         lightning_layer: ui.layer_lightning,
+        wind_layer: ui.layer_wind,
     };
     if matches!(settings.radar.basemap, Basemap::CartoDark | Basemap::CartoVoyager) && config.carto_key.is_none() {
         tracing::info!("[App] No CARTO key yet, the own map stands in");
@@ -461,6 +464,17 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     );
     *app.control.borrow_mut() = Some(control);
     app.show_weather();
+
+    // Behind a locked screen the radar neither fetches nor animates; it catches up when the user is back.
+    let away_handle = app.runtime.handle().clone();
+    let away_radar = app.radar.clone();
+    away_handle.spawn(async move {
+        loop {
+            let away = tokio::task::spawn_blocking(presence::away).await.unwrap_or(false);
+            away_radar.send(Command::Away(away));
+            tokio::time::sleep(Duration::from_secs(10)).await;
+        }
+    });
 
     // Tray events arrive on a plain channel; a thread hands them to the UI thread.
     std::thread::Builder::new().name("tray-events".into()).spawn(move || {
