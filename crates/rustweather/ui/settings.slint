@@ -1,9 +1,9 @@
-// The settings window, built like RustCut's: pages on the left, cards on the right, every change applies at once.
+// The settings page, built like RustCut's: pages on the left, cards on the right, every change applies at once.
 
 import { LineEdit, ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
-import { Card, Choice, Icon, IconButton, SettingRow, Slider, Switch, TextButton, TipLayer, Toast } from "controls.slint";
+import { Card, Choice, Icon, IconButton, SettingRow, Slider, Switch, TextButton } from "controls.slint";
 
 export struct SettingsData {
     theme: int, refresh: int, autostart: bool, log-level: int, station-url: string,
@@ -43,16 +43,8 @@ component Page inherits ScrollView {
     }
 }
 
-export component SettingsWindow inherits Window {
-    title: "RustWeather Settings";
-    icon: @image-url("../../../packaging/icons/rustweather-64.png");
-    preferred-width: 860px;
-    preferred-height: 640px;
-    min-width: 640px;
-    min-height: 420px;
-    background: Theme.background;
-    default-font-size: 13px;
-
+/// What the settings show and do. Rust fills it, so the page itself can come and go with the main window's pages.
+export global SettingsState {
     in-out property <int> page;
     in-out property <SettingsData> data;
     in property <[PlaceRow]> places;
@@ -70,8 +62,6 @@ export component SettingsWindow inherits Window {
     in property <[TrafficEntry]> traffic-entries;
     in-out property <bool> traffic-paused;
     in property <string> version;
-    in property <string> toast;
-    in property <int> toast-level;
     callback set-bool(string, bool);
     callback set-int(string, int);
     callback set-float(string, float);
@@ -92,12 +82,11 @@ export component SettingsWindow inherits Window {
     callback install-desktop();
     callback traffic-reset();
     callback remove-desktop();
-    public function copy-text(text: string) {
-        clipboard.text = text;
-        clipboard.select-all();
-        clipboard.copy();
-    }
-    clipboard := TextInput { visible: false; width: 0; height: 0; }
+    callback page-chosen(int);
+}
+
+export component SettingsPage inherits Rectangle {
+    background: Theme.background;
 
     property <[{icon: image, name: string}]> pages: [
         { icon: Icons.settings, name: "General" }, { icon: Icons.map-pin, name: "Places" }, { icon: Icons.bell, name: "Tray" },
@@ -117,191 +106,191 @@ export component SettingsWindow inherits Window {
                 for p[i] in root.pages: Rectangle {
                     height: 34px;
                     border-radius: 4px;
-                    background: i == root.page ? Theme.surface-selected : ta.has-hover ? Theme.surface-hover : transparent;
+                    background: i == SettingsState.page ? Theme.surface-selected : ta.has-hover ? Theme.surface-hover : transparent;
                     HorizontalLayout {
                         padding-left: 10px;
                         spacing: 9px;
-                        Icon { source: p.icon; y: 9px; tint: i == root.page ? Theme.text : Theme.text-muted; }
-                        Text { text: p.name; color: Theme.text; font-weight: i == root.page ? 700 : 400; vertical-alignment: center; }
+                        Icon { source: p.icon; y: 9px; tint: i == SettingsState.page ? Theme.text : Theme.text-muted; }
+                        Text { text: p.name; color: Theme.text; font-weight: i == SettingsState.page ? 700 : 400; vertical-alignment: center; }
                     }
-                    ta := TouchArea { clicked => { root.page = i; } }
+                    ta := TouchArea { clicked => { SettingsState.page = i; SettingsState.page-chosen(i); } }
                 }
             }
         }
         Rectangle {
             horizontal-stretch: 1;
-            if root.page == 0: Page {
+            if SettingsState.page == 0: Page {
                 title: "General";
                 Card {
-                    SettingRow { label: "Theme"; tip: "The app's colors: like the desktop, always dark or always light"; Choice { items: ["Follow system", "Dark", "Light"]; current: root.data.theme; selected(i) => { root.set-int("theme", i); } } }
+                    SettingRow { label: "Theme"; tip: "The app's colors: like the desktop, always dark or always light"; Choice { items: ["Follow system", "Dark", "Light"]; current: SettingsState.data.theme; selected(i) => { SettingsState.set-int("theme", i); } } }
                     SettingRow { label: "Weather update"; tip: "How often the temperature is renewed. Never while the screen is locked or a program runs in fullscreen";
-                        Choice { items: ["5 minutes", "10 minutes", "15 minutes", "30 minutes", "60 minutes"]; current: root.data.refresh; selected(i) => { root.set-int("refresh", i); } } }
-                    SettingRow { label: "Log detail"; tip: "How much goes into the log file. Debug is only for finding a problem"; Choice { items: ["Errors", "Warnings", "Info", "Debug"]; current: root.data.log-level; selected(i) => { root.set-int("log-level", i); } } }
+                        Choice { items: ["5 minutes", "10 minutes", "15 minutes", "30 minutes", "60 minutes"]; current: SettingsState.data.refresh; selected(i) => { SettingsState.set-int("refresh", i); } } }
+                    SettingRow { label: "Log detail"; tip: "How much goes into the log file. Debug is only for finding a problem"; Choice { items: ["Errors", "Warnings", "Info", "Debug"]; current: SettingsState.data.log-level; selected(i) => { SettingsState.set-int("log-level", i); } } }
                 }
             }
-            if root.page == 1: Page {
+            if SettingsState.page == 1: Page {
                 title: "Places";
                 Card {
                     title: "Your places";
-                    for p[i] in root.places: HorizontalLayout {
+                    for p[i] in SettingsState.places: HorizontalLayout {
                         spacing: 6px;
                         height: 28px;
-                        IconButton { icon: Icons.star; tip: "Show this place in the tray"; checked: p.active; clicked => { root.activate-place(i); } }
+                        IconButton { icon: Icons.star; tip: "Show this place in the tray"; checked: p.active; clicked => { SettingsState.activate-place(i); } }
                         Text { text: p.name; color: Theme.text; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
-                        IconButton { icon: Icons.trash; tip: "Remove"; enabled: root.places.length > 1; clicked => { root.remove-place(i); } }
+                        IconButton { icon: Icons.trash; tip: "Remove"; enabled: SettingsState.places.length > 1; clicked => { SettingsState.remove-place(i); } }
                     }
                 }
                 Card {
                     title: "Add a place";
                     LineEdit {
                         placeholder-text: "Type a name, then press Enter";
-                        accepted(t) => { root.search-place(t); }
+                        accepted(t) => { SettingsState.search-place(t); }
                     }
-                    for r[i] in root.search-results: Rectangle {
+                    for r[i] in SettingsState.search-results: Rectangle {
                         height: 26px;
                         border-radius: 3px;
                         background: hit.has-hover ? Theme.surface-hover : transparent;
                         Text { x: 6px; text: r; color: Theme.text; font-size: 12px; vertical-alignment: center; overflow: elide; }
-                        hit := TouchArea { clicked => { root.add-place(i); } }
+                        hit := TouchArea { clicked => { SettingsState.add-place(i); } }
                     }
                 }
             }
-            if root.page == 2: Page {
+            if SettingsState.page == 2: Page {
                 title: "Tray";
                 Card {
                     title: "When the pointer rests on the icon";
                     Sw {
                         label: "Show the weather card";
-                        tip: root.data.hover-usable
+                        tip: SettingsState.data.hover-usable
                             ? "Shows the card instead of the panel's tooltip. Click the icon once, so RustWeather knows where it sits"
                             : "Needs X11: under Wayland a program cannot see the pointer on the panel";
                         key: "hover-card";
-                        on: root.data.hover-card;
-                        changed-to(k, v) => { root.set-bool(k, v); }
+                        on: SettingsState.data.hover-card;
+                        changed-to(k, v) => { SettingsState.set-bool(k, v); }
                     }
                 }
                 Card {
                     title: "On the icon";
-                    Sw { label: "Blue dot: rain within the hour"; tip: "Shows a blue dot on the tray icon when rain is due"; key: "show-rain"; on: root.data.show-rain; changed-to(k, v) => { root.set-bool(k, v); } }
-                    Sw { label: "Yellow triangle: active warning"; tip: "Shows a yellow triangle on the tray icon during a warning"; key: "show-alert"; on: root.data.show-alert; changed-to(k, v) => { root.set-bool(k, v); } }
-                    Sw { label: "Pale when the data is old"; tip: "Fades the tray icon when the temperature could not be renewed"; key: "show-stale"; on: root.data.show-stale; changed-to(k, v) => { root.set-bool(k, v); } }
-                    Sw { label: "Small arrow: getting warmer or colder"; tip: "Shows the trend of the temperature on the tray icon"; key: "show-trend"; on: root.data.show-trend; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Blue dot: rain within the hour"; tip: "Shows a blue dot on the tray icon when rain is due"; key: "show-rain"; on: SettingsState.data.show-rain; changed-to(k, v) => { SettingsState.set-bool(k, v); } }
+                    Sw { label: "Yellow triangle: active warning"; tip: "Shows a yellow triangle on the tray icon during a warning"; key: "show-alert"; on: SettingsState.data.show-alert; changed-to(k, v) => { SettingsState.set-bool(k, v); } }
+                    Sw { label: "Pale when the data is old"; tip: "Fades the tray icon when the temperature could not be renewed"; key: "show-stale"; on: SettingsState.data.show-stale; changed-to(k, v) => { SettingsState.set-bool(k, v); } }
+                    Sw { label: "Small arrow: getting warmer or colder"; tip: "Shows the trend of the temperature on the tray icon"; key: "show-trend"; on: SettingsState.data.show-trend; changed-to(k, v) => { SettingsState.set-bool(k, v); } }
                     SettingRow { label: "Tile color"; tip: "Background of the tray icon as a color like #1c2128. Empty uses the temperature's color";
-                        LineEdit { width: 120px; text: root.data.tile-bg; edited(t) => { root.set-text("tile-bg", t); } } }
+                        LineEdit { width: 120px; text: SettingsState.data.tile-bg; edited(t) => { SettingsState.set-text("tile-bg", t); } } }
                     SettingRow { label: "Digit color"; tip: "Color of the digits as a color like #ffffff. Empty uses white";
-                        LineEdit { width: 120px; text: root.data.tile-fg; edited(t) => { root.set-text("tile-fg", t); } } }
+                        LineEdit { width: 120px; text: SettingsState.data.tile-fg; edited(t) => { SettingsState.set-text("tile-fg", t); } } }
                 }
                 Card {
                     title: "In the tooltip";
-                    Sw { label: "Feels like"; tip: "Adds the felt temperature to the tooltip"; key: "line-feels"; on: root.data.line-feels; changed-to(k, v) => { root.set-bool(k, v); } }
-                    Sw { label: "Low and high of today"; tip: "Adds today's lowest and highest temperature to the tooltip"; key: "line-range"; on: root.data.line-range; changed-to(k, v) => { root.set-bool(k, v); } }
-                    Sw { label: "When rain comes or stops"; tip: "Adds when rain starts or ends to the tooltip"; key: "line-rain"; on: root.data.line-rain; changed-to(k, v) => { root.set-bool(k, v); } }
-                    Sw { label: "Active warnings"; tip: "Adds current warnings to the tooltip"; key: "line-alerts"; on: root.data.line-alerts; changed-to(k, v) => { root.set-bool(k, v); } }
-                    Sw { label: "Wind and gusts"; tip: "Adds wind and gusts to the tooltip"; key: "line-wind"; on: root.data.line-wind; changed-to(k, v) => { root.set-bool(k, v); } }
-                    Sw { label: "Humidity and pressure"; tip: "Adds humidity and air pressure to the tooltip"; key: "line-humidity"; on: root.data.line-humidity; changed-to(k, v) => { root.set-bool(k, v); } }
-                    Sw { label: "Sunrise or sunset"; tip: "Adds the next sunrise or sunset to the tooltip"; key: "line-sun"; on: root.data.line-sun; changed-to(k, v) => { root.set-bool(k, v); } }
-                    Sw { label: "Age of the data"; tip: "Adds how old the measurement is to the tooltip"; key: "line-age"; on: root.data.line-age; changed-to(k, v) => { root.set-bool(k, v); } }
-                    Sw { label: "Next update"; tip: "Adds the time of the next update to the tooltip"; key: "line-next"; on: root.data.line-next; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Feels like"; tip: "Adds the felt temperature to the tooltip"; key: "line-feels"; on: SettingsState.data.line-feels; changed-to(k, v) => { SettingsState.set-bool(k, v); } }
+                    Sw { label: "Low and high of today"; tip: "Adds today's lowest and highest temperature to the tooltip"; key: "line-range"; on: SettingsState.data.line-range; changed-to(k, v) => { SettingsState.set-bool(k, v); } }
+                    Sw { label: "When rain comes or stops"; tip: "Adds when rain starts or ends to the tooltip"; key: "line-rain"; on: SettingsState.data.line-rain; changed-to(k, v) => { SettingsState.set-bool(k, v); } }
+                    Sw { label: "Active warnings"; tip: "Adds current warnings to the tooltip"; key: "line-alerts"; on: SettingsState.data.line-alerts; changed-to(k, v) => { SettingsState.set-bool(k, v); } }
+                    Sw { label: "Wind and gusts"; tip: "Adds wind and gusts to the tooltip"; key: "line-wind"; on: SettingsState.data.line-wind; changed-to(k, v) => { SettingsState.set-bool(k, v); } }
+                    Sw { label: "Humidity and pressure"; tip: "Adds humidity and air pressure to the tooltip"; key: "line-humidity"; on: SettingsState.data.line-humidity; changed-to(k, v) => { SettingsState.set-bool(k, v); } }
+                    Sw { label: "Sunrise or sunset"; tip: "Adds the next sunrise or sunset to the tooltip"; key: "line-sun"; on: SettingsState.data.line-sun; changed-to(k, v) => { SettingsState.set-bool(k, v); } }
+                    Sw { label: "Age of the data"; tip: "Adds how old the measurement is to the tooltip"; key: "line-age"; on: SettingsState.data.line-age; changed-to(k, v) => { SettingsState.set-bool(k, v); } }
+                    Sw { label: "Next update"; tip: "Adds the time of the next update to the tooltip"; key: "line-next"; on: SettingsState.data.line-next; changed-to(k, v) => { SettingsState.set-bool(k, v); } }
                 }
             }
-            if root.page == 3: Page {
+            if SettingsState.page == 3: Page {
                 title: "Radar";
                 Card {
                     SettingRow { label: "Source"; tip: "Where the rain comes from. Auto uses the DWD over Germany and RainViewer elsewhere";
-                        Choice { items: ["Auto", "DWD", "RainViewer"]; current: root.data.source; selected(i) => { root.set-int("source", i); } } }
-                    SettingRow { label: "Rain colors"; tip: "The color scale of the rain on the map"; Choice { items: ["Classic", "Calm", "Blue"]; current: root.data.palette; selected(i) => { root.set-int("palette", i); } } }
-                    SettingRow { label: "Rain opacity"; tip: "How strongly the rain covers the map"; Slider { width: 200px; minimum: 20; maximum: 100; value: root.data.opacity; moved(v) => { root.set-float("opacity", v); } } }
-                    SettingRow { label: "Speed"; tip: "How fast the radar plays"; Slider { width: 200px; minimum: 60; maximum: 1000; value: 1060 - root.data.speed; moved(v) => { root.set-float("speed", 1060 - v); } } }
-                    Sw { label: "Play when the radar opens"; tip: "Starts playing as soon as the radar is on screen"; key: "autoplay"; on: root.data.autoplay; changed-to(k, v) => { root.set-bool(k, v); } }
-                    Sw { label: "Smooth motion"; tip: "Blends between radar pictures so the rain moves smoothly"; key: "smooth"; on: root.data.smooth; changed-to(k, v) => { root.set-bool(k, v); } }
-                    Sw { label: "Repeat"; tip: "Starts over at the end of the timeline"; key: "looping"; on: root.data.looping; changed-to(k, v) => { root.set-bool(k, v); } }
-                    Sw { label: "Place names above the rain"; tip: "Keeps place names readable by drawing them over the rain"; key: "labels"; on: root.data.labels; changed-to(k, v) => { root.set-bool(k, v); } }
+                        Choice { items: ["Auto", "DWD", "RainViewer"]; current: SettingsState.data.source; selected(i) => { SettingsState.set-int("source", i); } } }
+                    SettingRow { label: "Rain colors"; tip: "The color scale of the rain on the map"; Choice { items: ["Classic", "Calm", "Blue"]; current: SettingsState.data.palette; selected(i) => { SettingsState.set-int("palette", i); } } }
+                    SettingRow { label: "Rain opacity"; tip: "How strongly the rain covers the map"; Slider { width: 200px; minimum: 20; maximum: 100; value: SettingsState.data.opacity; moved(v) => { SettingsState.set-float("opacity", v); } } }
+                    SettingRow { label: "Speed"; tip: "How fast the radar plays"; Slider { width: 200px; minimum: 60; maximum: 1000; value: 1060 - SettingsState.data.speed; moved(v) => { SettingsState.set-float("speed", 1060 - v); } } }
+                    Sw { label: "Play when the radar opens"; tip: "Starts playing as soon as the radar is on screen"; key: "autoplay"; on: SettingsState.data.autoplay; changed-to(k, v) => { SettingsState.set-bool(k, v); } }
+                    Sw { label: "Smooth motion"; tip: "Blends between radar pictures so the rain moves smoothly"; key: "smooth"; on: SettingsState.data.smooth; changed-to(k, v) => { SettingsState.set-bool(k, v); } }
+                    Sw { label: "Repeat"; tip: "Starts over at the end of the timeline"; key: "looping"; on: SettingsState.data.looping; changed-to(k, v) => { SettingsState.set-bool(k, v); } }
+                    Sw { label: "Place names above the rain"; tip: "Keeps place names readable by drawing them over the rain"; key: "labels"; on: SettingsState.data.labels; changed-to(k, v) => { SettingsState.set-bool(k, v); } }
                 }
             }
-            if root.page == 4: Page {
+            if SettingsState.page == 4: Page {
                 title: "Sources";
                 Card {
                     title: "Weather";
                     SettingRow { label: "Current weather"; detail: "DWD through Bright Sky, no key needed."; }
                     SettingRow { label: "Forecast, air quality, pollen"; detail: "Open-Meteo, no key needed."; }
                     SettingRow { label: "Station page as a fallback"; tip: "A wetterdienst.de address, read when the DWD data is out. Empty turns it off"; }
-                    LineEdit { text: root.data.station-url; edited(t) => { root.set-text("station-url", t); } }
+                    LineEdit { text: SettingsState.data.station-url; edited(t) => { SettingsState.set-text("station-url", t); } }
                 }
                 Card {
                     title: "CARTO key";
                     SettingRow { label: "Key"; tip: "Stored in ~/.config/rustweather/secrets.toml, readable only by you"; }
                     key-edit := LineEdit {
                         input-type: password;
-                        placeholder-text: root.data.has-carto ? "A key is stored. Type to replace it." : "Paste your key here";
+                        placeholder-text: SettingsState.data.has-carto ? "A key is stored. Type to replace it." : "Paste your key here";
                     }
                     HorizontalLayout {
                         spacing: 6px;
                         alignment: start;
-                        TextButton { text: "Save"; clicked => { root.save-key(key-edit.text); key-edit.text = ""; } }
-                        TextButton { text: "Test key"; icon: Icons.check; has-icon: true; clicked => { root.test-key(); } }
-                        Text { text: root.key-state; color: Theme.text-muted; font-size: 12px; vertical-alignment: center; }
+                        TextButton { text: "Save"; clicked => { SettingsState.save-key(key-edit.text); key-edit.text = ""; } }
+                        TextButton { text: "Test key"; icon: Icons.check; has-icon: true; clicked => { SettingsState.test-key(); } }
+                        Text { text: SettingsState.key-state; color: Theme.text-muted; font-size: 12px; vertical-alignment: center; }
                     }
                 }
             }
-            if root.page == 5: Page {
+            if SettingsState.page == 5: Page {
                 title: "Cache";
                 Card {
-                    Text { text: root.data.cache-text; color: Theme.text; }
+                    Text { text: SettingsState.data.cache-text; color: Theme.text; }
                     Rectangle {
                         height: 10px;
                         border-radius: 3px;
                         background: Theme.surface-hover;
-                        Rectangle { x: 0; width: parent.width * root.data.cache-share; border-radius: 3px; background: Theme.primary; }
+                        Rectangle { x: 0; width: parent.width * SettingsState.data.cache-share; border-radius: 3px; background: Theme.primary; }
                     }
                 }
                 Card {
-                    SettingRow { label: "Largest size"; tip: "Old map and radar data is removed above this size"; Choice { items: ["100 MB", "300 MB", "500 MB", "1 GB", "2 GB"]; current: root.data.cache-limit; selected(i) => { root.set-int("cache-limit", i); } } }
-                    SettingRow { label: "Keep radar pictures"; tip: "How long past radar pictures stay on the disk"; Choice { items: ["6 hours", "24 hours", "3 days", "7 days"]; current: root.data.radar-hours; selected(i) => { root.set-int("radar-hours", i); } } }
+                    SettingRow { label: "Largest size"; tip: "Old map and radar data is removed above this size"; Choice { items: ["100 MB", "300 MB", "500 MB", "1 GB", "2 GB"]; current: SettingsState.data.cache-limit; selected(i) => { SettingsState.set-int("cache-limit", i); } } }
+                    SettingRow { label: "Keep radar pictures"; tip: "How long past radar pictures stay on the disk"; Choice { items: ["6 hours", "24 hours", "3 days", "7 days"]; current: SettingsState.data.radar-hours; selected(i) => { SettingsState.set-int("radar-hours", i); } } }
                 }
                 HorizontalLayout {
                     spacing: 6px;
                     alignment: start;
-                    TextButton { text: "Get Germany's map for offline use"; icon: Icons.map; has-icon: true; clicked => { root.offline-map(); } }
-                    TextButton { text: "Open folder"; icon: Icons.folder-open; has-icon: true; clicked => { root.open-cache(); } }
-                    TextButton { text: "Empty cache"; icon: Icons.trash; has-icon: true; clicked => { root.clear-cache(); } }
+                    TextButton { text: "Get Germany's map for offline use"; icon: Icons.map; has-icon: true; clicked => { SettingsState.offline-map(); } }
+                    TextButton { text: "Open folder"; icon: Icons.folder-open; has-icon: true; clicked => { SettingsState.open-cache(); } }
+                    TextButton { text: "Empty cache"; icon: Icons.trash; has-icon: true; clicked => { SettingsState.clear-cache(); } }
                 }
             }
-            if root.page == 6: Page {
+            if SettingsState.page == 6: Page {
                 title: "Alerts";
                 Card {
                     title: "Tell me about";
-                    Sw { label: "Pause all notifications"; tip: "Stops every notification until you turn this off"; key: "al-paused"; on: root.data.al-paused; changed-to(k, v) => { root.set-bool(k, v); } }
-                    Sw { label: "Rain is coming"; tip: "Tells you shortly before rain starts here"; key: "al-rain"; on: root.data.al-rain; changed-to(k, v) => { root.set-bool(k, v); } }
-                    Sw { label: "Rain is ending"; tip: "Tells you shortly before the rain stops here"; key: "al-end"; on: root.data.al-end; changed-to(k, v) => { root.set-bool(k, v); } }
-                    Sw { label: "Official DWD warnings"; tip: "Tells you about warnings from the DWD for your place"; key: "al-dwd"; on: root.data.al-dwd; changed-to(k, v) => { root.set-bool(k, v); } }
-                    Sw { label: "Check warnings in the background"; tip: "Also checks DWD warnings with no window open, at one more request per update. Never while locked or in fullscreen"; key: "al-background"; on: root.data.al-background; changed-to(k, v) => { root.set-bool(k, v); } }
-                    Sw { label: "Thunderstorms nearby"; tip: "Tells you when thunderstorms are expected in the next hours"; key: "al-storm"; on: root.data.al-storm; changed-to(k, v) => { root.set-bool(k, v); } }
-                    Sw { label: "Frost tonight"; tip: "Tells you when it will freeze tonight"; key: "al-frost"; on: root.data.al-frost; changed-to(k, v) => { root.set-bool(k, v); } }
-                    Sw { label: "Heat"; tip: "Tells you when it will reach 30 °C or more today"; key: "al-heat"; on: root.data.al-heat; changed-to(k, v) => { root.set-bool(k, v); } }
-                    SettingRow { label: "DWD warnings from"; tip: "The weakest warning level that still notifies you"; Choice { items: ["Every warning", "Significant weather", "Severe weather", "Extreme only"]; current: root.data.al-level; selected(i) => { root.set-int("al-level", i); } } }
-                    SettingRow { label: "Rain warning ahead"; tip: "How long before the rain the notification comes"; detail: "\{Math.round(root.data.al-lead)} minutes"; Slider { width: 200px; minimum: 5; maximum: 60; value: root.data.al-lead; moved(v) => { root.set-float("al-lead", v); } } }
+                    Sw { label: "Pause all notifications"; tip: "Stops every notification until you turn this off"; key: "al-paused"; on: SettingsState.data.al-paused; changed-to(k, v) => { SettingsState.set-bool(k, v); } }
+                    Sw { label: "Rain is coming"; tip: "Tells you shortly before rain starts here"; key: "al-rain"; on: SettingsState.data.al-rain; changed-to(k, v) => { SettingsState.set-bool(k, v); } }
+                    Sw { label: "Rain is ending"; tip: "Tells you shortly before the rain stops here"; key: "al-end"; on: SettingsState.data.al-end; changed-to(k, v) => { SettingsState.set-bool(k, v); } }
+                    Sw { label: "Official DWD warnings"; tip: "Tells you about warnings from the DWD for your place"; key: "al-dwd"; on: SettingsState.data.al-dwd; changed-to(k, v) => { SettingsState.set-bool(k, v); } }
+                    Sw { label: "Check warnings in the background"; tip: "Also checks DWD warnings with no window open, at one more request per update. Never while locked or in fullscreen"; key: "al-background"; on: SettingsState.data.al-background; changed-to(k, v) => { SettingsState.set-bool(k, v); } }
+                    Sw { label: "Thunderstorms nearby"; tip: "Tells you when thunderstorms are expected in the next hours"; key: "al-storm"; on: SettingsState.data.al-storm; changed-to(k, v) => { SettingsState.set-bool(k, v); } }
+                    Sw { label: "Frost tonight"; tip: "Tells you when it will freeze tonight"; key: "al-frost"; on: SettingsState.data.al-frost; changed-to(k, v) => { SettingsState.set-bool(k, v); } }
+                    Sw { label: "Heat"; tip: "Tells you when it will reach 30 °C or more today"; key: "al-heat"; on: SettingsState.data.al-heat; changed-to(k, v) => { SettingsState.set-bool(k, v); } }
+                    SettingRow { label: "DWD warnings from"; tip: "The weakest warning level that still notifies you"; Choice { items: ["Every warning", "Significant weather", "Severe weather", "Extreme only"]; current: SettingsState.data.al-level; selected(i) => { SettingsState.set-int("al-level", i); } } }
+                    SettingRow { label: "Rain warning ahead"; tip: "How long before the rain the notification comes"; detail: "\{Math.round(SettingsState.data.al-lead)} minutes"; Slider { width: 200px; minimum: 5; maximum: 60; value: SettingsState.data.al-lead; moved(v) => { SettingsState.set-float("al-lead", v); } } }
                 }
                 HorizontalLayout {
                     alignment: start;
-                    TextButton { text: "Send a test notification"; icon: Icons.bell; has-icon: true; clicked => { root.test-notification(); } }
+                    TextButton { text: "Send a test notification"; icon: Icons.bell; has-icon: true; clicked => { SettingsState.test-notification(); } }
                 }
                 Card {
                     title: "Quiet";
-                    Sw { label: "Quiet at night"; tip: "No notifications during the hours below"; key: "al-night"; on: root.data.al-night; changed-to(k, v) => { root.set-bool(k, v); } }
-                    SettingRow { label: "From"; tip: "Start of the quiet hours"; Choice { items: ["18:00", "19:00", "20:00", "21:00", "22:00", "23:00", "0:00"]; current: root.data.al-from; selected(i) => { root.set-int("al-from", i); } } }
-                    SettingRow { label: "To"; tip: "End of the quiet hours"; Choice { items: ["5:00", "6:00", "7:00", "8:00", "9:00", "10:00"]; current: root.data.al-to; selected(i) => { root.set-int("al-to", i); } } }
-                    Sw { label: "Severe warnings get through anyway"; tip: "Severe and extreme warnings ignore the quiet times"; key: "al-severe"; on: root.data.al-severe; changed-to(k, v) => { root.set-bool(k, v); } }
-                    Sw { label: "Quiet during fullscreen programs"; tip: "No notifications while a program runs in fullscreen"; key: "al-full"; on: root.data.al-full; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Quiet at night"; tip: "No notifications during the hours below"; key: "al-night"; on: SettingsState.data.al-night; changed-to(k, v) => { SettingsState.set-bool(k, v); } }
+                    SettingRow { label: "From"; tip: "Start of the quiet hours"; Choice { items: ["18:00", "19:00", "20:00", "21:00", "22:00", "23:00", "0:00"]; current: SettingsState.data.al-from; selected(i) => { SettingsState.set-int("al-from", i); } } }
+                    SettingRow { label: "To"; tip: "End of the quiet hours"; Choice { items: ["5:00", "6:00", "7:00", "8:00", "9:00", "10:00"]; current: SettingsState.data.al-to; selected(i) => { SettingsState.set-int("al-to", i); } } }
+                    Sw { label: "Severe warnings get through anyway"; tip: "Severe and extreme warnings ignore the quiet times"; key: "al-severe"; on: SettingsState.data.al-severe; changed-to(k, v) => { SettingsState.set-bool(k, v); } }
+                    Sw { label: "Quiet during fullscreen programs"; tip: "No notifications while a program runs in fullscreen"; key: "al-full"; on: SettingsState.data.al-full; changed-to(k, v) => { SettingsState.set-bool(k, v); } }
                 }
             }
-            if root.page == 7: Page {
+            if SettingsState.page == 7: Page {
                 title: "Units";
                 Card {
-                    SettingRow { label: "Temperature"; tip: "Unit for all temperatures"; Choice { items: ["°C", "°F"]; current: root.data.temp-unit; selected(i) => { root.set-int("temp-unit", i); } } }
-                    SettingRow { label: "Wind"; tip: "Unit for all wind speeds"; Choice { items: ["km/h", "m/s", "Beaufort"]; current: root.data.wind-unit; selected(i) => { root.set-int("wind-unit", i); } } }
+                    SettingRow { label: "Temperature"; tip: "Unit for all temperatures"; Choice { items: ["°C", "°F"]; current: SettingsState.data.temp-unit; selected(i) => { SettingsState.set-int("temp-unit", i); } } }
+                    SettingRow { label: "Wind"; tip: "Unit for all wind speeds"; Choice { items: ["km/h", "m/s", "Beaufort"]; current: SettingsState.data.wind-unit; selected(i) => { SettingsState.set-int("wind-unit", i); } } }
                 }
             }
-            if root.page == 8: Page {
+            if SettingsState.page == 8: Page {
                 title: "Desktop";
                 Card {
                     HorizontalLayout {
@@ -309,24 +298,24 @@ export component SettingsWindow inherits Window {
                         Rectangle {
                             width: 12px;
                             Rectangle { y: 4px; width: 12px; height: 12px; border-radius: 6px;
-                                background: root.desktop-level == 1 ? Theme.ok : root.desktop-level == 2 ? Theme.warn : Theme.surface-selected; }
+                                background: SettingsState.desktop-level == 1 ? Theme.ok : SettingsState.desktop-level == 2 ? Theme.warn : Theme.surface-selected; }
                         }
                         VerticalLayout {
                             horizontal-stretch: 1;
-                            Text { text: root.desktop-title; color: Theme.text; font-weight: 700; }
-                            Text { text: root.desktop-detail; color: Theme.text-muted; font-size: 12px; wrap: word-wrap; }
+                            Text { text: SettingsState.desktop-title; color: Theme.text; font-weight: 700; }
+                            Text { text: SettingsState.desktop-detail; color: Theme.text-muted; font-size: 12px; wrap: word-wrap; }
                         }
                     }
                     HorizontalLayout {
                         spacing: 6px;
                         alignment: start;
-                        if root.desktop-install != "": TextButton { text: root.desktop-install; icon: Icons.download; has-icon: true; clicked => { root.install-desktop(); } }
-                        if root.desktop-can-remove: TextButton { text: "Uninstall"; icon: Icons.trash; has-icon: true; clicked => { root.remove-desktop(); } }
+                        if SettingsState.desktop-install != "": TextButton { text: SettingsState.desktop-install; icon: Icons.download; has-icon: true; clicked => { SettingsState.install-desktop(); } }
+                        if SettingsState.desktop-can-remove: TextButton { text: "Uninstall"; icon: Icons.trash; has-icon: true; clicked => { SettingsState.remove-desktop(); } }
                     }
                 }
                 Card {
                     title: "What belongs to it";
-                    for r in root.desktop-rows: HorizontalLayout {
+                    for r in SettingsState.desktop-rows: HorizontalLayout {
                         spacing: 8px;
                         Icon { source: r.ok ? Icons.check : Icons.x; width: 14px; height: 14px; y: 2px; tint: r.ok ? Theme.ok : Theme.text-disabled; }
                         VerticalLayout {
@@ -337,10 +326,10 @@ export component SettingsWindow inherits Window {
                     }
                 }
                 Card {
-                    Sw { label: "Start with the desktop"; tip: "Starts RustWeather at login. Uninstalling turns this off, your settings, places and keys stay"; key: "autostart"; on: root.data.autostart; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Start with the desktop"; tip: "Starts RustWeather at login. Uninstalling turns this off, your settings, places and keys stay"; key: "autostart"; on: SettingsState.data.autostart; changed-to(k, v) => { SettingsState.set-bool(k, v); } }
                 }
             }
-            if root.page == 9: Page {
+            if SettingsState.page == 9: Page {
                 title: "Hotkeys";
                 Card {
                     title: "In the radar";
@@ -351,10 +340,10 @@ export component SettingsWindow inherits Window {
                     }
                 }
             }
-            if root.page == 10: Page {
+            if SettingsState.page == 10: Page {
                 title: "Diagnostics";
                 Card {
-                    for h in root.health: HorizontalLayout {
+                    for h in SettingsState.health: HorizontalLayout {
                         spacing: 8px;
                         Rectangle { width: 8px; Rectangle { y: 5px; width: 8px; height: 8px; border-radius: 4px;
                             background: h.state == 3 ? Theme.error : h.state == 2 ? Theme.warn : h.state == 1 ? Theme.ok : Theme.surface-selected; } }
@@ -370,19 +359,19 @@ export component SettingsWindow inherits Window {
                 HorizontalLayout {
                     spacing: 6px;
                     alignment: start;
-                    TextButton { text: "Check all"; icon: Icons.activity; has-icon: true; clicked => { root.check-all(); } }
-                    TextButton { text: "Copy report"; icon: Icons.copy; has-icon: true; clicked => { root.copy-report(); } }
-                    TextButton { text: "Open log"; icon: Icons.file-text; has-icon: true; clicked => { root.open-log(); } }
+                    TextButton { text: "Check all"; icon: Icons.activity; has-icon: true; clicked => { SettingsState.check-all(); } }
+                    TextButton { text: "Copy report"; icon: Icons.copy; has-icon: true; clicked => { SettingsState.copy-report(); } }
+                    TextButton { text: "Open log"; icon: Icons.file-text; has-icon: true; clicked => { SettingsState.open-log(); } }
                 }
             }
-            if root.page == 11: Page {
+            if SettingsState.page == 11: Page {
                 title: "Network";
-                Text { text: root.traffic-summary; color: Theme.text-muted; font-size: 12px; wrap: word-wrap; }
+                Text { text: SettingsState.traffic-summary; color: Theme.text-muted; font-size: 12px; wrap: word-wrap; }
                 HorizontalLayout {
                     spacing: 6px;
                     alignment: start;
-                    TextButton { text: root.traffic-paused ? "Go on" : "Pause list"; icon: root.traffic-paused ? Icons.player-play : Icons.player-pause; has-icon: true; clicked => { root.traffic-paused = !root.traffic-paused; } }
-                    TextButton { text: "Start over"; icon: Icons.refresh; has-icon: true; clicked => { root.traffic-reset(); } }
+                    TextButton { text: SettingsState.traffic-paused ? "Go on" : "Pause list"; icon: SettingsState.traffic-paused ? Icons.player-play : Icons.player-pause; has-icon: true; clicked => { SettingsState.traffic-paused = !SettingsState.traffic-paused; } }
+                    TextButton { text: "Start over"; icon: Icons.refresh; has-icon: true; clicked => { SettingsState.traffic-reset(); } }
                 }
                 Card {
                     title: "Servers";
@@ -397,7 +386,7 @@ export component SettingsWindow inherits Window {
                         Text { text: "Data"; color: Theme.text-muted; font-size: 11px; width: 60px; horizontal-alignment: right; }
                         Text { text: "Average"; color: Theme.text-muted; font-size: 11px; width: 60px; horizontal-alignment: right; }
                     }
-                    for h in root.traffic-hosts: HorizontalLayout {
+                    for h in SettingsState.traffic-hosts: HorizontalLayout {
                         spacing: 8px;
                         VerticalLayout {
                             horizontal-stretch: 1;
@@ -419,7 +408,7 @@ export component SettingsWindow inherits Window {
                 }
                 Card {
                     title: "Latest requests";
-                    for e in root.traffic-entries: HorizontalLayout {
+                    for e in SettingsState.traffic-entries: HorizontalLayout {
                         spacing: 8px;
                         Text { text: e.time; color: Theme.text-muted; font-size: 11px; width: 54px; }
                         Text { text: e.provider; color: Theme.text; font-size: 11px; width: 86px; overflow: elide; }
@@ -430,15 +419,13 @@ export component SettingsWindow inherits Window {
                     }
                 }
             }
-            if root.page == 12: Page {
+            if SettingsState.page == 12: Page {
                 title: "About";
                 Card {
-                    Text { text: "RustWeather " + root.version; color: Theme.text; font-weight: 700; }
+                    Text { text: "RustWeather " + SettingsState.version; color: Theme.text; font-weight: 700; }
                     Text { text: "Weather data: DWD through Bright Sky, Open-Meteo, RainViewer. Maps: OpenStreetMap contributors, Esri, EOX, OpenTopoMap, BKG, CARTO, Natural Earth. Cities: GeoNames. Icons: Tabler (MIT)."; color: Theme.text-muted; wrap: word-wrap; }
                 }
             }
-            if root.toast != "": Toast { x: parent.width - self.width - 12px; y: 12px; text: root.toast; level: root.toast-level; }
         }
     }
-    TipLayer { width: root.width; height: root.height; }
 }

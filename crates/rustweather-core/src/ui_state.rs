@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 pub struct UiState {
     pub page: i32,
     pub main_window: Option<WindowState>,
-    pub settings_window: Option<WindowState>,
+    pub settings_page: i32,
     pub mini_window: Option<WindowState>,
     pub view_lon: f64,
     pub view_lat: f64,
@@ -29,7 +29,7 @@ impl Default for UiState {
         Self {
             page: 0,
             main_window: None,
-            settings_window: None,
+            settings_page: 0,
             mini_window: None,
             view_lon: 10.45,
             view_lat: 51.2,

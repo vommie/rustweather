@@ -8,11 +8,11 @@ import { MapChoice, AlertData, CityLabel, DayData, FrameCell, HourData, LayerRec
 import { NowPage } from "now_page.slint";
 import { ForecastPage } from "forecast_page.slint";
 import { RadarPage } from "radar_page.slint";
-import { DesktopRow, HealthRow, PlaceRow, SettingsData, SettingsWindow, TrafficEntry, TrafficHost } from "settings.slint";
+import { DesktopRow, HealthRow, PlaceRow, SettingsData, SettingsPage, SettingsState, TrafficEntry, TrafficHost } from "settings.slint";
 import { FlyoutWindow } from "flyout.slint";
 import { MiniWindow } from "mini.slint";
 
-export { Theme, MapChoice, SettingsWindow, SettingsData, PlaceRow, DesktopRow, HealthRow, TrafficEntry, TrafficHost, FlyoutWindow, MiniWindow, NowData, HourData, DayData, AlertData, FrameCell, CityLabel, LayerRect, RainBar, TempLabel, ViewChip }
+export { Theme, MapChoice, SettingsState, SettingsData, PlaceRow, DesktopRow, HealthRow, TrafficEntry, TrafficHost, FlyoutWindow, MiniWindow, NowData, HourData, DayData, AlertData, FrameCell, CityLabel, LayerRect, RainBar, TempLabel, ViewChip }
 
 component RailButton inherits Rectangle {
     in property <image> icon;
@@ -183,7 +183,7 @@ export component MainWindow inherits Window {
                 RailButton { icon: Icons.map; tip: "Radar"; active: root.page == 2; clicked => { root.page = 2; root.page-changed(2); } }
                 RailButton { icon: Icons.alert-triangle; tip: "Warnings"; active: root.page == 3; badge: root.alerts.length; clicked => { root.page = 3; root.page-changed(3); } }
                 Rectangle { vertical-stretch: 1; }
-                RailButton { icon: Icons.settings; tip: "Settings"; clicked => { root.open-settings(); } }
+                RailButton { icon: Icons.settings; tip: "Settings"; active: root.page == 4; clicked => { root.open-settings(); } }
             }
         }
         VerticalLayout {
@@ -288,6 +288,7 @@ export component MainWindow inherits Window {
                     map-picker(open) => { root.map-picker(open); }
                 }
                 if root.page == 3: AlertsPage { alerts: root.alerts; }
+                if root.page == 4: SettingsPage { }
                 if root.toast != "": Toast { x: parent.width - self.width - 12px; y: 42px; text: root.toast; level: root.toast-level; }
             }
             if !root.full: StatusLine {
@@ -298,5 +299,11 @@ export component MainWindow inherits Window {
             }
         }
     }
+    public function copy-text(text: string) {
+        clipboard.text = text;
+        clipboard.select-all();
+        clipboard.copy();
+    }
+    clipboard := TextInput { visible: false; width: 0; height: 0; }
     TipLayer { width: root.width; height: root.height; }
 }

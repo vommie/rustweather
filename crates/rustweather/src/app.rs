@@ -26,14 +26,13 @@ use crate::tray::{self, TrayData, TrayEvent};
 use crate::weather::Presence;
 use crate::weather::{self, Control, Snapshot};
 use crate::{
-    Cli, FlyoutWindow, MainWindow, MiniWindow, SettingsWindow, Theme, instance, logging, models, presence, radar_ui,
+    Cli, FlyoutWindow, MainWindow, MiniWindow, SettingsState, Theme, instance, logging, models, presence, radar_ui,
     settings_ui,
 };
 use slint::winit_030::WinitWindowAccessor as _;
 
 pub struct App {
     pub main: MainWindow,
-    pub settings_window: SettingsWindow,
     pub flyout: FlyoutWindow,
     pub mini: MiniWindow,
     pub paths: Paths,
@@ -99,6 +98,9 @@ pub fn with_app(f: impl FnOnce(&Rc<App>) + Send + 'static) {
     });
 }
 
+/// The settings' place among the main window's pages.
+pub const SETTINGS: i32 = 4;
+
 /// A minimized window is not on screen, even though it is open.
 fn on_screen(window: &slint::Window) -> bool {
     window.is_visible()
@@ -133,15 +135,10 @@ impl App {
     pub fn toast(&self, text: &str, level: i32) {
         self.main.set_toast(text.into());
         self.main.set_toast_level(level);
-        self.settings_window.set_toast(text.into());
-        self.settings_window.set_toast_level(level);
-        let (main, settings) = (self.main.as_weak(), self.settings_window.as_weak());
+        let main = self.main.as_weak();
         self.toast_timer
             .start(slint::TimerMode::SingleShot, Duration::from_secs(5), move || {
                 if let Some(w) = main.upgrade() {
-                    w.set_toast("".into());
-                }
-                if let Some(w) = settings.upgrade() {
                     w.set_toast("".into());
                 }
             });
@@ -177,10 +174,7 @@ impl App {
         let (locked, fullscreen) = self.outside.get();
         let own_fullscreen = self.main.get_full() && on_screen(self.main.window());
         let quiet = locked || (fullscreen && !own_fullscreen);
-        let in_use = on_screen(self.main.window())
-            || on_screen(self.mini.window())
-            || on_screen(self.flyout.window())
-            || on_screen(self.settings_window.window());
+        let in_use = on_screen(self.main.window()) || on_screen(self.mini.window()) || on_screen(self.flyout.window());
         let presence = match (quiet, in_use) {
             (true, _) => Presence::Quiet,
             (false, true) => Presence::Active,
@@ -305,13 +299,16 @@ impl App {
 
     pub fn open_settings(&self, page: Option<i32>) {
         if let Some(page) = page {
-            self.settings_window.set_page(page);
+            self.settings_state().set_page(page);
+            self.ui.borrow_mut().settings_page = page;
         }
         settings_ui::refresh(self);
-        let saved = self.ui.borrow().settings_window;
-        if let Err(e) = crate::window_state::show_restored(&self.settings_window, saved) {
-            tracing::error!(error = %e, "[App] Could not show the settings");
-        }
+        self.open_main(Some(SETTINGS));
+        self.save_ui();
+    }
+
+    pub fn settings_state(&self) -> SettingsState<'_> {
+        self.main.global::<SettingsState>()
     }
 
     pub fn toggle_flyout(&self, x: i32, y: i32) {
@@ -484,7 +481,6 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     let http = Http::new()?;
     http.traffic().persist_to(paths.cache.join("traffic.json"));
     let main = MainWindow::new()?;
-    let settings_window = SettingsWindow::new()?;
     let flyout = FlyoutWindow::new()?;
     let mini = MiniWindow::new()?;
     let mode = match settings.general.theme {
@@ -493,7 +489,6 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         rustweather_core::settings::ThemeMode::Light => 2,
     };
     main.global::<Theme>().set_mode(mode);
-    settings_window.global::<Theme>().set_mode(mode);
     flyout.global::<Theme>().set_mode(mode);
     mini.global::<Theme>().set_mode(mode);
 
@@ -536,7 +531,6 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     let fg = cli.fg_color.as_deref().and_then(Rgb::parse);
     let app = Rc::new(App {
         main,
-        settings_window,
         flyout,
         mini,
         paths,
@@ -594,6 +588,8 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     crate::hover::start(&app);
     crate::window_state::wire(&app);
     app.main.set_page(app.ui.borrow().page);
+    app.settings_state().set_page(app.ui.borrow().settings_page);
+    settings_ui::refresh(&app);
 
     let control = weather::spawn(
         app.runtime.handle(),

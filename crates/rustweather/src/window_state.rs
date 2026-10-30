@@ -89,11 +89,10 @@ fn capture(window: &slint::Window, old: Option<WindowState>) -> Option<WindowSta
 fn remember(app: &App) {
     let changed = {
         let mut ui = app.ui.borrow_mut();
-        let before = (ui.main_window, ui.settings_window, ui.mini_window);
+        let before = (ui.main_window, ui.mini_window);
         ui.main_window = capture(app.main.window(), ui.main_window);
-        ui.settings_window = capture(app.settings_window.window(), ui.settings_window);
         ui.mini_window = capture(app.mini.window(), ui.mini_window);
-        before != (ui.main_window, ui.settings_window, ui.mini_window)
+        before != (ui.main_window, ui.mini_window)
     };
     if changed {
         app.save_ui();
@@ -119,6 +118,5 @@ fn watch(window: &slint::Window, app: &Rc<App>) {
 
 pub fn wire(app: &Rc<App>) {
     watch(app.main.window(), app);
-    watch(app.settings_window.window(), app);
     watch(app.mini.window(), app);
 }

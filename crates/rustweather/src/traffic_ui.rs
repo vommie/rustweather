@@ -57,7 +57,7 @@ fn entry_row(entry: &Entry) -> TrafficEntry {
 
 fn show(app: &App) {
     let snapshot = app.http.traffic().snapshot();
-    let window = &app.settings_window;
+    let window = app.settings_state();
     let sum = |f: fn(&HostStats) -> u64| snapshot.hosts.iter().map(f).sum::<u64>();
     window.set_traffic_summary(
         format!(
@@ -109,7 +109,7 @@ pub fn wire(app: &Rc<App>) {
         }
     });
     let weak = Rc::downgrade(app);
-    app.settings_window.on_traffic_reset(move || {
+    app.settings_state().on_traffic_reset(move || {
         if let Some(app) = weak.upgrade() {
             app.http.traffic().reset();
             show(&app);
@@ -118,8 +118,9 @@ pub fn wire(app: &Rc<App>) {
     let weak = Rc::downgrade(app);
     app.traffic_timer.start(slint::TimerMode::Repeated, REFRESH, move || {
         if let Some(app) = weak.upgrade()
-            && app.settings_window.window().is_visible()
-            && app.settings_window.get_page() == PAGE
+            && app.main.window().is_visible()
+            && app.main.get_page() == crate::app::SETTINGS
+            && app.settings_state().get_page() == PAGE
         {
             show(&app);
         }

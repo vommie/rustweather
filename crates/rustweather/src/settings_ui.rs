@@ -1,4 +1,4 @@
-//! The settings window: shows the settings and applies every change at once.
+//! The settings page: shows the settings and applies every change at once.
 
 use std::rc::Rc;
 use std::time::Duration;
@@ -123,7 +123,7 @@ fn places(s: &Settings) -> Vec<PlaceRow> {
 
 pub fn refresh(app: &App) {
     let s = app.settings.borrow();
-    let window = &app.settings_window;
+    let window = app.settings_state();
     window.set_data(data(app, &s));
     window.set_places(ModelRc::new(VecModel::from(places(&s))));
     window.set_version(env!("CARGO_PKG_VERSION").into());
@@ -134,7 +134,7 @@ pub fn refresh(app: &App) {
 
 /// The Desktop page: what is installed, and what the buttons can do.
 pub fn refresh_desktop(app: &App) {
-    let window = &app.settings_window;
+    let window = app.settings_state();
     let status = app.desktop.status();
     let (title, detail, level, install) = match status.state {
         State::Installed => ("Installed", "RustWeather is part of your desktop.", 1, "Install again"),
@@ -207,7 +207,7 @@ pub fn refresh_health(app: &App) {
             detail: h.detail.as_str().into(),
         })
         .collect();
-    app.settings_window.set_health(ModelRc::new(VecModel::from(rows)));
+    app.settings_state().set_health(ModelRc::new(VecModel::from(rows)));
 }
 
 fn set_bool(s: &mut Settings, key: &str, value: bool) {
@@ -295,7 +295,6 @@ fn apply(app: &App) {
         ThemeMode::Light => 2,
     };
     app.main.global::<Theme>().set_mode(mode);
-    app.settings_window.global::<Theme>().set_mode(mode);
     app.flyout.global::<Theme>().set_mode(mode);
     app.mini.global::<Theme>().set_mode(mode);
     app.push_radar_config();
@@ -304,7 +303,7 @@ fn apply(app: &App) {
 }
 
 pub fn wire(app: &Rc<App>) {
-    let window = &app.settings_window;
+    let window = app.settings_state();
     let weak = Rc::downgrade(app);
     macro_rules! on {
         ($setter:ident, |$app:ident $(, $arg:ident)*| $body:block) => {{
@@ -363,7 +362,7 @@ pub fn wire(app: &Rc<App>) {
                 Ok(found) if found.is_empty() => app.toast("No place found under this name.", 3),
                 Ok(found) => {
                     let names: Vec<SharedString> = found.iter().map(|p| p.name.as_str().into()).collect();
-                    app.settings_window
+                    app.settings_state()
                         .set_search_results(ModelRc::new(VecModel::from(names)));
                     *app.search_results.borrow_mut() = found;
                 }
@@ -379,7 +378,7 @@ pub fn wire(app: &Rc<App>) {
             .cloned();
         if let Some(place) = found {
             app.settings.borrow_mut().places.push(place);
-            app.settings_window.set_search_results(ModelRc::default());
+            app.settings_state().set_search_results(ModelRc::default());
             app.save_settings();
             refresh(&app);
             app.show_weather();
@@ -406,7 +405,7 @@ pub fn wire(app: &Rc<App>) {
         app.secrets.borrow_mut().set(secrets::CARTO, &key);
         crate::radar_ui::show_maps(&app);
         match app.secrets.borrow().save(&app.paths.secrets_file()) {
-            Ok(()) => app.settings_window.set_key_state("Saved.".into()),
+            Ok(()) => app.settings_state().set_key_state("Saved.".into()),
             Err(e) => app.toast(&format!("Could not save the key: {e}"), 3),
         }
         app.push_radar_config();
@@ -414,10 +413,10 @@ pub fn wire(app: &Rc<App>) {
     });
     on!(on_test_key, |app| {
         let Some(key) = app.secrets.borrow().get(secrets::CARTO).map(str::to_owned) else {
-            app.settings_window.set_key_state("No key stored yet.".into());
+            app.settings_state().set_key_state("No key stored yet.".into());
             return;
         };
-        app.settings_window.set_key_state("Testing …".into());
+        app.settings_state().set_key_state("Testing …".into());
         let http = app.http.clone();
         app.runtime.spawn(async move {
             let result = carto_key_works(&http, &key).await;
@@ -427,7 +426,7 @@ pub fn wire(app: &Rc<App>) {
                     Ok(false) => ("CARTO rejected this key.".to_owned(), 3),
                     Err(e) => (format!("Could not test the key: {e}"), 3),
                 };
-                app.settings_window.set_key_state(text.as_str().into());
+                app.settings_state().set_key_state(text.as_str().into());
                 app.toast(&text, level);
             });
         });
@@ -438,13 +437,17 @@ pub fn wire(app: &Rc<App>) {
         }
         app.radar.send(Command::Reload);
     });
+    on!(on_page_chosen, |app, page| {
+        app.ui.borrow_mut().settings_page = page;
+        app.save_ui();
+    });
     on!(on_copy_report, |app| {
         let snapshot = app.snapshot.borrow();
         let mut text = format!("RustWeather {}\n", env!("CARGO_PKG_VERSION"));
         for h in &snapshot.health {
             text.push_str(&format!("{}: {:?} {} ms {}\n", h.name, h.ok, h.millis, h.detail));
         }
-        app.settings_window.invoke_copy_text(text.into());
+        app.main.invoke_copy_text(text.into());
         app.toast("Report copied.", 1);
     });
     on!(on_open_log, |app| {
