@@ -2,7 +2,7 @@
 
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
-import { IconButton, Icon, TipLayer } from "controls.slint";
+import { IconButton, Icon, TipArea, TipLayer } from "controls.slint";
 import { HourData, NowData, RainBar } from "types.slint";
 
 export component FlyoutWindow inherits Window {
@@ -44,15 +44,26 @@ export component FlyoutWindow inherits Window {
                 }
             }
             if root.now.rain-line != "": Text { text: root.now.rain-line; color: Theme.primary; font-size: 12px; font-weight: 600; wrap: word-wrap; }
-            HorizontalLayout {
-                height: 34px;
-                spacing: 1px;
-                for b in root.bars: Rectangle {
-                    Rectangle {
-                        y: parent.height - self.height;
-                        height: max(1px, parent.height * b.height);
-                        background: b.past ? Theme.surface-selected : Theme.primary;
+            if root.bars.length > 0: VerticalLayout {
+                spacing: 2px;
+                Text { text: "Rain at your place"; color: Theme.text-muted; font-size: 10px; }
+                Rectangle {
+                    height: 30px;
+                    HorizontalLayout {
+                        spacing: 1px;
+                        for b in root.bars: Rectangle {
+                            Rectangle {
+                                y: parent.height - self.height;
+                                height: max(1px, parent.height * b.height);
+                                background: b.past ? Theme.surface-selected : Theme.primary;
+                            }
+                        }
                     }
+                    TipArea { tip: "Rain at your place from the radar: gray has fallen, blue is expected. The higher, the stronger."; }
+                }
+                HorizontalLayout {
+                    Text { text: "Past"; color: Theme.text-muted; font-size: 10px; }
+                    Text { text: "Expected"; color: Theme.primary; font-size: 10px; horizontal-stretch: 1; horizontal-alignment: right; }
                 }
             }
             HorizontalLayout {
@@ -72,12 +83,12 @@ export component FlyoutWindow inherits Window {
             }
             HorizontalLayout {
                 spacing: 4px;
-                alignment: start;
                 IconButton { icon: Icons.map; tip: "Radar"; clicked => { root.open-page(2); } }
                 IconButton { icon: Icons.calendar; tip: "Forecast"; clicked => { root.open-page(1); } }
                 IconButton { icon: Icons.sun; tip: "Details"; clicked => { root.open-page(0); } }
                 IconButton { icon: Icons.refresh; tip: "Update now"; clicked => { root.refresh(); } }
                 IconButton { icon: Icons.settings; tip: "Settings"; clicked => { root.settings(); } }
+                Text { text: root.now.updated; color: Theme.text-muted; font-size: 11px; horizontal-stretch: 1; horizontal-alignment: right; vertical-alignment: center; }
             }
         }
     }

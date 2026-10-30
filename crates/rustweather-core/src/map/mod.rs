@@ -61,9 +61,9 @@ impl View {
         let (dx, dy) = (w * (0.5 + margin), h * (0.5 + margin));
         Extent {
             x0: cx - dx,
-            y0: (cy - dy).max(0.01),
+            y0: cy - dy,
             x1: cx + dx,
-            y1: (cy + dy).min(0.99),
+            y1: cy + dy,
         }
     }
 

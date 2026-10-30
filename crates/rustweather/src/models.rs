@@ -227,6 +227,9 @@ pub fn now(snapshot: &Snapshot, settings: &Settings) -> NowData {
         measured: c.measured_at.map_or_else(SharedString::default, |t| {
             s(format!("Measured {}", t.with_timezone(&Local).format("%H:%M")))
         }),
+        updated: snapshot.fetched_at.map_or_else(SharedString::default, |t| {
+            s(format!("Updated {}", t.with_timezone(&Local).format("%H:%M")))
+        }),
         rain_line: s(rain_line(snapshot.outlook).unwrap_or_default()),
         tile: slint_color(c.temperature.map_or(Rgb(0x5c, 0x60, 0x70), color::tile)),
         history_path: s(curve.line),
@@ -391,6 +394,10 @@ pub fn alerts(snapshot: &Snapshot) -> Vec<AlertData> {
 /// The rain curve of the place.
 pub fn bars(snapshot: &Snapshot) -> Vec<RainBar> {
     let now = Utc::now();
+    // Without rain there is nothing to see in a curve.
+    if snapshot.series.iter().all(|p| p.1 < 0.1) {
+        return Vec::new();
+    }
     let top = snapshot.series.iter().map(|p| p.1).fold(1.0, f32::max);
     snapshot
         .series

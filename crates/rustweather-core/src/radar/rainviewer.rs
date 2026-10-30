@@ -5,7 +5,7 @@ use serde::Deserialize;
 
 use crate::error::Result;
 use crate::http::Http;
-use crate::map::tiles::Layer;
+use crate::map::tiles::{Layer, Post};
 
 #[derive(Deserialize)]
 struct Answer {
@@ -49,6 +49,7 @@ pub async fn frames(http: &Http) -> Result<Vec<Frame>> {
             Some(Frame {
                 time,
                 layer: Layer {
+                    post: Post::None,
                     id,
                     url,
                     tile_size: 512,
