@@ -5,6 +5,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-30
+
 ### Changed
 
 - The Now page is redesigned: a colored summary, symbols, small gauges for wind, UV, air and the sun, and a clearer 24-hour curve.
@@ -54,5 +56,6 @@ First release, replacing the `weather_tray.py` script.
 - Arch package with `build-package.sh`.
 - The application menu entry offers Radar and Settings as actions; a second start opens what it asks for.
 
-[Unreleased]: https://github.com/vommie/rustweather/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/vommie/rustweather/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/vommie/rustweather/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/vommie/rustweather/releases/tag/v0.1.0
