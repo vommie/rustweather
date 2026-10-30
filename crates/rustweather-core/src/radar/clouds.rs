@@ -3,17 +3,19 @@
 //! "current" fails the same way. So every request names its time, is repeated a few times, and only then falls back to an older
 //! slot. The picture is opaque, with land and sea in it: only what is bright stays, as clouds.
 
+use std::time::Duration;
+
 use chrono::{DateTime, DurationRound as _, TimeDelta, Utc};
 
 use crate::error::{Error, Result};
 use crate::http::Http;
-use crate::map::{View, to_unit};
+use crate::map::Extent;
 
 const LAYER: &str = "dwd:Satellite_meteosat_1km_euat_rgb_day_hrv_and_night_ir108_3h";
 const SLOTS: i64 = 5;
 const TRIES: usize = 4;
-/// Half the view's size: a cloud has soft edges, and the server takes seconds per picture.
-pub const SCALE: u32 = 2;
+/// The server renders a satellite picture on request, which takes seconds and sometimes a minute.
+const PICTURE_TIMEOUT: Duration = Duration::from_secs(90);
 const CLEAR: f32 = 0.42;
 const OVERCAST: f32 = 0.78;
 
@@ -23,21 +25,11 @@ pub fn slots(now: DateTime<Utc>) -> Vec<DateTime<Utc>> {
     (0..SLOTS).map(|i| newest - TimeDelta::hours(3 * i)).collect()
 }
 
-fn url(view: &View, time: DateTime<Utc>) -> String {
-    let half = 6_378_137.0 * std::f64::consts::PI;
-    let scale = view.scale();
-    let (cx, cy) = to_unit(view.lon, view.lat);
-    let (dx, dy) = (
-        f64::from(view.width) / 2.0 / scale,
-        f64::from(view.height) / 2.0 / scale,
-    );
-    let (x0, x1) = (((cx - dx) * 2.0 - 1.0) * half, ((cx + dx) * 2.0 - 1.0) * half);
-    let (y0, y1) = ((1.0 - (cy + dy) * 2.0) * half, (1.0 - (cy - dy) * 2.0) * half);
+fn url(extent: &Extent, width: u32, height: u32, time: DateTime<Utc>) -> String {
     format!(
         "https://maps.dwd.de/geoserver/dwd/wms?service=WMS&version=1.3.0&request=GetMap&layers={LAYER}&styles=&crs=EPSG:3857\
-         &bbox={x0},{y0},{x1},{y1}&width={}&height={}&format=image/png&time={}",
-        (view.width / SCALE).max(1),
-        (view.height / SCALE).max(1),
+         &bbox={}&width={width}&height={height}&format=image/png&time={}",
+        extent.bbox_3857(),
         time.format("%Y-%m-%dT%H:%M:00.000Z")
     )
 }
@@ -60,10 +52,12 @@ pub struct Clouds {
 }
 
 /// The newest picture there is. The server answers "no such time" with an XML text and HTTP 200, so only a picture counts.
-pub async fn fetch(http: &Http, view: &View) -> Result<Clouds> {
+pub async fn fetch(http: &Http, extent: &Extent, width: u32, height: u32) -> Result<Clouds> {
     for time in slots(Utc::now()) {
         for _ in 0..TRIES {
-            let bytes = http.bytes(&url(view, time)).await?;
+            let bytes = http
+                .bytes_within(&url(extent, width, height, time), PICTURE_TIMEOUT)
+                .await?;
             if let Ok(image) = image::load_from_memory(&bytes) {
                 let image = image.into_rgba8();
                 let (width, height) = image.dimensions();
@@ -98,17 +92,16 @@ mod tests {
 
     #[test]
     fn every_request_names_its_time() {
-        let view = View {
-            lon: 10.0,
-            lat: 51.0,
-            zoom: 6.0,
-            width: 800,
-            height: 600,
+        let extent = Extent {
+            x0: 0.5,
+            y0: 0.3,
+            x1: 0.6,
+            y1: 0.4,
         };
         let time = DateTime::parse_from_rfc3339("2026-10-30T12:00:00Z")
             .unwrap()
             .with_timezone(&Utc);
-        let text = url(&view, time);
+        let text = url(&extent, 400, 300, time);
         assert!(text.contains("&time=2026-10-30T12:00:00.000Z"));
         assert!(text.contains("&width=400&height=300"));
     }

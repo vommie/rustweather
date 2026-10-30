@@ -12,13 +12,14 @@ export global Tips {
 }
 
 /// One tooltip bubble per window, on top of everything. Put it last in the window.
-export component TipLayer {
-    in property <length> window-width;
-    in property <length> window-height;
+export component TipLayer inherits Rectangle {
+    // It must have the window's size: the renderer skips what is inside an element of no size.
     if Tips.show && Tips.text != "": bubble := Rectangle {
-        property <length> w: min(320px, label.preferred-width + 18px);
-        x: min(Tips.x, root.window-width - self.w - 6px);
-        y: Tips.y + 30px > root.window-height ? Tips.y - 34px : Tips.y + 4px;
+        // A wrapping text reports no useful width of its own, so a hidden line measures it.
+        measure := Text { visible: false; text: Tips.text; font-size: 12px; }
+        property <length> w: min(320px, measure.preferred-width + 20px);
+        x: max(6px, min(Tips.x, root.width - self.w - 6px));
+        y: Tips.y + self.height + 6px > root.height ? Tips.y - self.height - 8px : Tips.y + 4px;
         width: self.w;
         height: label.preferred-height + 12px;
         background: Theme.surface;
@@ -27,12 +28,31 @@ export component TipLayer {
         border-radius: 4px;
         label := Text {
             x: 9px;
+            y: 6px;
             width: parent.width - 18px;
             text: Tips.text;
             color: Theme.text;
             font-size: 12px;
             wrap: word-wrap;
             vertical-alignment: center;
+        }
+    }
+}
+
+/// Shows a tooltip for whatever it covers; put it last in the element it explains.
+export component TipArea inherits TouchArea {
+    in property <string> tip;
+    changed has-hover => {
+        if !self.has-hover { Tips.show = false; }
+    }
+    Timer {
+        interval: 450ms;
+        running: root.has-hover && !Tips.show && root.tip != "";
+        triggered => {
+            Tips.text = root.tip;
+            Tips.x = root.absolute-position.x + root.mouse-x + 10px;
+            Tips.y = root.absolute-position.y + root.mouse-y + 12px;
+            Tips.show = true;
         }
     }
 }
@@ -53,6 +73,8 @@ export component IconButton inherits Rectangle {
     in property <bool> checked;
     in property <bool> primary;
     in property <length> icon-size: 16px;
+    // Beside the button instead of under it, for the rail at the window's edge.
+    in property <bool> tip-beside;
     callback clicked();
     width: 28px;
     height: 26px;
@@ -84,8 +106,8 @@ export component IconButton inherits Rectangle {
         running: touch.has-hover && !Tips.show && root.tip != "";
         triggered => {
             Tips.text = root.tip;
-            Tips.x = root.absolute-position.x;
-            Tips.y = root.absolute-position.y + root.height;
+            Tips.x = root.absolute-position.x + (root.tip-beside ? root.width + 6px : 0);
+            Tips.y = root.absolute-position.y + (root.tip-beside ? 2px : root.height);
             Tips.show = true;
         }
     }
@@ -128,13 +150,14 @@ export component Chip inherits Rectangle {
     in property <bool> has-icon: false;
     in property <bool> checked;
     in property <string> key;
+    in property <string> tip;
     callback clicked();
     height: 26px;
     width: row.preferred-width;
     border-radius: 4px;
     border-width: 1px;
     border-color: root.checked ? Theme.primary : Theme.border;
-    background: root.checked ? Theme.surface.mix(Theme.primary, 0.75) : touch.has-hover ? Theme.surface-hover : Theme.surface;
+    background: root.checked ? Theme.surface.mix(Theme.primary, 0.75) : Theme.surface;
     row := HorizontalLayout {
         padding-left: 9px;
         padding-right: 9px;
@@ -150,9 +173,13 @@ export component Chip inherits Rectangle {
             vertical-alignment: center;
         }
     }
-    touch := TouchArea {
+    TipArea {
+        tip: root.tip;
         mouse-cursor: pointer;
-        clicked => { root.clicked(); }
+        clicked => {
+            Tips.show = false;
+            root.clicked();
+        }
     }
 }
 
@@ -274,6 +301,26 @@ export component Slider inherits Rectangle {
             if e.kind == PointerEventKind.down { self.set(self.mouse-x); }
         }
         moved => { if self.pressed { self.set(self.mouse-x); } }
+    }
+}
+
+/// Weather symbols, by the kind Rust sends (models::weather_kind).
+export global Weather {
+    pure public function icon(kind: int) -> image {
+        if kind == 0 { return Icons.sun; }
+        if kind == 1 { return Icons.sun-low; }
+        if kind == 2 { return Icons.cloud; }
+        if kind == 3 { return Icons.cloud-fog; }
+        if kind == 4 { return Icons.cloud-rain; }
+        if kind == 5 { return Icons.cloud-snow; }
+        if kind == 6 { return Icons.cloud-storm; }
+        return Icons.moon;
+    }
+    pure public function tint(kind: int) -> color {
+        if kind == 0 || kind == 1 { return Theme.accent; }
+        if kind == 4 { return Theme.primary; }
+        if kind == 6 { return Theme.warn; }
+        return Theme.text-muted;
     }
 }
 

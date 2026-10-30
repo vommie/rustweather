@@ -39,12 +39,16 @@ fn compass(degrees: f32) -> &'static str {
     NAMES[((degrees.rem_euclid(360.0) + 22.5) / 45.0) as usize % 8]
 }
 
-/// The moon's phase from its mean cycle, measured from a known new moon.
-pub fn moon_phase(now: DateTime<Utc>) -> &'static str {
+/// Where the moon is in its mean cycle (0 = new moon, 0.5 = full moon), measured from a known new moon.
+fn moon_cycle(now: DateTime<Utc>) -> f64 {
     const CYCLE: f64 = 29.530_588;
     let known = DateTime::from_timestamp(947_182_440, 0).unwrap_or(now); // 2000-01-06 18:14 UTC
     let days = (now - known).num_seconds() as f64 / 86_400.0;
-    match (days.rem_euclid(CYCLE) / CYCLE * 8.0).round() as u32 % 8 {
+    days.rem_euclid(CYCLE) / CYCLE
+}
+
+pub fn moon_phase(now: DateTime<Utc>) -> &'static str {
+    match (moon_cycle(now) * 8.0).round() as u32 % 8 {
         0 => "New moon",
         1 => "Waxing crescent",
         2 => "First quarter",
@@ -66,7 +70,30 @@ fn air_word(aqi: f32) -> &'static str {
     }
 }
 
-fn history(forecast: &Forecast, unit: TempUnit) -> (String, String) {
+/// The kind of symbol for a weather code, as `Weather` in controls.slint knows it.
+pub fn weather_kind(code: u8, night: bool) -> i32 {
+    match code {
+        0 | 1 if night => 7,
+        0 => 0,
+        1 | 2 => 1,
+        3 => 2,
+        45 | 48 => 3,
+        51..=67 | 80..=82 => 4,
+        71..=77 | 85 | 86 => 5,
+        95..=99 => 6,
+        _ => 2,
+    }
+}
+
+struct History {
+    line: String,
+    fill: String,
+    low: String,
+    high: String,
+}
+
+/// The temperature of the last 24 hours, drawn on a 1000 × 100 canvas.
+fn history(forecast: &Forecast, unit: TempUnit) -> History {
     let now = Local::now();
     let past: Vec<f32> = forecast
         .hours
@@ -75,14 +102,19 @@ fn history(forecast: &Forecast, unit: TempUnit) -> (String, String) {
         .map(|h| h.temperature)
         .collect();
     if past.len() < 2 {
-        return (String::new(), String::new());
+        return History {
+            line: String::new(),
+            fill: String::new(),
+            low: String::new(),
+            high: String::new(),
+        };
     }
     let (low, high) = past
         .iter()
         .fold((f32::MAX, f32::MIN), |m, v| (m.0.min(*v), m.1.max(*v)));
     let span = (high - low).max(1.0);
     let step = 1000.0 / (past.len() - 1) as f32;
-    let path = past
+    let line: String = past
         .iter()
         .enumerate()
         .map(|(i, v)| {
@@ -90,11 +122,53 @@ fn history(forecast: &Forecast, unit: TempUnit) -> (String, String) {
                 "{}{:.1} {:.1}",
                 if i == 0 { "M" } else { " L" },
                 i as f32 * step,
-                92.0 - (v - low) / span * 84.0
+                90.0 - (v - low) / span * 80.0
             )
         })
         .collect();
-    (path, format!("{} to {}", temp_text(low, unit), temp_text(high, unit)))
+    let fill = format!("{line} L1000 100 L0 100 Z");
+    History {
+        line,
+        fill,
+        low: temp_text(low, unit),
+        high: temp_text(high, unit),
+    }
+}
+
+fn uv_word(uv: f32) -> &'static str {
+    match uv {
+        x if x < 3.0 => "Low",
+        x if x < 6.0 => "Moderate",
+        x if x < 8.0 => "High",
+        x if x < 11.0 => "Very high",
+        _ => "Extreme",
+    }
+}
+
+fn air_color(aqi: f32) -> Color {
+    let rgb = match aqi {
+        x if x <= 20.0 => Rgb(0x40, 0xa0, 0x2b),
+        x if x <= 40.0 => Rgb(0x7f, 0xb3, 0x2e),
+        x if x <= 60.0 => Rgb(0xd9, 0xa4, 0x1a),
+        x if x <= 80.0 => Rgb(0xe0, 0x6c, 0x1f),
+        _ => Rgb(0xd2, 0x2d, 0x4a),
+    };
+    slint_color(rgb)
+}
+
+/// How far the day has come between sunrise and sunset, and how long it is.
+fn daylight(today: Option<&model::Day>) -> (f32, bool, String) {
+    let Some((rise, set)) = today.and_then(|d| Some((d.sunrise?, d.sunset?))) else {
+        return (0.0, false, String::new());
+    };
+    let length = (set - rise).num_minutes().max(1);
+    let done = (Local::now() - rise).num_minutes();
+    let up = done >= 0 && done <= length;
+    (
+        (done as f32 / length as f32).clamp(0.0, 1.0),
+        up,
+        format!("{} h {} min of daylight", length / 60, length % 60),
+    )
 }
 
 pub fn now(snapshot: &Snapshot, settings: &Settings) -> NowData {
@@ -106,7 +180,10 @@ pub fn now(snapshot: &Snapshot, settings: &Settings) -> NowData {
         Some(_) => model::condition(f.code).to_owned(),
         None => c.condition.clone(),
     };
-    let (history_path, history_range) = history(&f, unit);
+    let curve = history(&f, unit);
+    let (sun_share, sun_up, day_length) = daylight(today.as_ref());
+    let cycle = moon_cycle(Utc::now());
+    let lit = (1.0 - (cycle * std::f64::consts::TAU).cos()) / 2.0 * 100.0;
     let local = |t: Option<DateTime<Local>>| t.map_or_else(|| s("–"), |t| s(t.format("%H:%M").to_string()));
     NowData {
         has_data: snapshot.current.is_some(),
@@ -152,8 +229,26 @@ pub fn now(snapshot: &Snapshot, settings: &Settings) -> NowData {
         }),
         rain_line: s(rain_line(snapshot.outlook).unwrap_or_default()),
         tile: slint_color(c.temperature.map_or(Rgb(0x5c, 0x60, 0x70), color::tile)),
-        history_path: s(history_path),
-        history_range: s(history_range),
+        history_path: s(curve.line),
+        history_fill: s(curve.fill),
+        history_low: s(curve.low),
+        history_high: s(curve.high),
+        weather: weather_kind(f.code, !sun_up),
+        wind_to: c.wind_dir.map_or(0.0, |d| (d + 180.0).rem_euclid(360.0)),
+        humidity_share: c.humidity.unwrap_or(0.0) / 100.0,
+        uv_share: f.uv.map_or(0.0, |u| (u / 11.0).min(1.0)),
+        uv_word: f.uv.map_or_else(SharedString::default, |u| s(uv_word(u))),
+        air_color: f.air_quality.map_or(Color::from_argb_u8(0, 0, 0, 0), air_color),
+        pollen_detail: s(if f.pollen.is_empty() {
+            "Nothing in the air"
+        } else {
+            "In the air now"
+        }),
+        sun_share,
+        sun_up,
+        daylight: s(day_length),
+        moon_share: cycle as f32,
+        moon_lit: s(format!("{lit:.0} % lit")),
     }
 }
 
@@ -177,16 +272,50 @@ pub fn hours(snapshot: &Snapshot, count: usize, step: usize) -> Vec<HourData> {
     let rain_top = ahead.iter().map(|h| h.precipitation).fold(1.0, f32::max);
     ahead
         .iter()
-        .map(|h| HourData {
-            label: s(h.time.map_or(String::new(), |t| t.hour().to_string())),
-            temperature: s(format!("{:.0}°", h.temperature)),
-            rain: h.precipitation / rain_top,
-            probability: if h.probability >= 10.0 {
-                s(format!("{:.0} %", h.probability))
-            } else {
-                SharedString::default()
-            },
-            height: 0.15 + (h.temperature - low) / span * 0.75,
+        .map(|h| {
+            let night = h.time.is_some_and(|t| t.hour() < 7 || t.hour() >= 18);
+            let clock = h.time.map_or(String::new(), |t| t.format("%H:%M").to_string());
+            HourData {
+                label: s(h.time.map_or(String::new(), |t| t.hour().to_string())),
+                temperature: s(format!("{:.0}°", h.temperature)),
+                rain: h.precipitation / rain_top,
+                rain_text: if h.precipitation >= 0.05 {
+                    s(format!("{:.1}", h.precipitation))
+                } else {
+                    SharedString::default()
+                },
+                probability: if h.probability >= 10.0 {
+                    s(format!("{:.0} %", h.probability))
+                } else {
+                    SharedString::default()
+                },
+                height: 0.12 + (h.temperature - low) / span * 0.76,
+                weather: weather_kind(h.code, night),
+                tip: s(format!(
+                    "{clock}: {}, {:.0} °C, {:.1} mm of rain, {:.0} % chance of rain",
+                    model::condition(h.code),
+                    h.temperature,
+                    h.precipitation,
+                    h.probability
+                )),
+            }
+        })
+        .collect()
+}
+
+/// The temperature curve through the hour columns, on a 1000 × 100 canvas.
+pub fn hours_path(hours: &[HourData]) -> String {
+    let n = hours.len().max(1) as f32;
+    hours
+        .iter()
+        .enumerate()
+        .map(|(i, h)| {
+            format!(
+                "{}{:.1} {:.1}",
+                if i == 0 { "M" } else { " L" },
+                (i as f32 + 0.5) / n * 1000.0,
+                (1.0 - h.height) * 100.0
+            )
         })
         .collect()
 }
@@ -226,6 +355,15 @@ pub fn days(snapshot: &Snapshot, settings: &Settings) -> Vec<DayData> {
             start: (d.min - low) / span,
             end: (d.max - low) / span,
             color: slint_color(color::temperature((d.min + d.max) / 2.0)),
+            weather: weather_kind(d.code, false),
+            tip: s(format!(
+                "{}: {}, {} to {}, {:.1} mm of rain",
+                d.date.map_or(String::new(), |x| x.format("%A").to_string()),
+                model::condition(d.code),
+                temp_text(d.min, unit),
+                temp_text(d.max, unit),
+                d.precipitation
+            )),
         })
         .collect()
 }

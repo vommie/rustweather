@@ -58,7 +58,10 @@ async fn cloud_picture_answers() {
         width: 1000,
         height: 700,
     };
-    let clouds = rustweather_core::radar::clouds::fetch(&http, &view).await.unwrap();
+    let extent = view.extent(0.0);
+    let clouds = rustweather_core::radar::clouds::fetch(&http, &extent, 500, 350)
+        .await
+        .unwrap();
     println!("clouds from {}", clouds.time);
     assert_eq!((clouds.width, clouds.height), (500, 350));
     assert!(clouds.rgba.as_chunks::<4>().0.iter().any(|p| p[3] > 0));

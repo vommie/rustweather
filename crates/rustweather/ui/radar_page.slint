@@ -3,7 +3,7 @@
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
 import { Chip, IconButton, Slider, ThinBar, Banner, Icon } from "controls.slint";
-import { CityLabel, FrameCell, RainBar, ViewChip } from "types.slint";
+import { CityLabel, FrameCell, LayerRect, RainBar, ViewChip } from "types.slint";
 
 export component Timeline inherits Rectangle {
     in property <[FrameCell]> frames;
@@ -53,8 +53,12 @@ export component Timeline inherits Rectangle {
 
 export component RadarPage inherits Rectangle {
     in property <image> base;
-    in property <image> overlay;
+    in property <image> warnings;
+    in property <LayerRect> warnings-rect;
+    in property <image> lightning;
+    in property <LayerRect> lightning-rect;
     in property <image> clouds;
+    in property <LayerRect> clouds-rect;
     in property <string> clouds-label: "Clouds";
     in property <image> rain;
     in property <image> wind;
@@ -113,8 +117,9 @@ export component RadarPage inherits Rectangle {
     init => { root.resized(self.width, self.height); }
 
     Image { width: 100%; height: 100%; source: root.base; image-fit: fill; }
-    Image { width: 100%; height: 100%; source: root.overlay; image-fit: fill; opacity: 0.65; }
-    Image { width: 100%; height: 100%; source: root.clouds; image-fit: fill; }
+    Image { x: root.clouds-rect.x; y: root.clouds-rect.y; width: root.clouds-rect.width; height: root.clouds-rect.height; source: root.clouds; image-fit: fill; }
+    Image { x: root.warnings-rect.x; y: root.warnings-rect.y; width: root.warnings-rect.width; height: root.warnings-rect.height; source: root.warnings; image-fit: fill; opacity: 0.65; }
+    Image { x: root.lightning-rect.x; y: root.lightning-rect.y; width: root.lightning-rect.width; height: root.lightning-rect.height; source: root.lightning; image-fit: fill; }
     Image { width: 100%; height: 100%; source: root.rain; image-fit: fill; }
     Image { width: 100%; height: 100%; source: root.wind; image-fit: fill; }
     Image { width: 100%; height: 100%; source: root.labels; image-fit: fill; }
@@ -134,6 +139,23 @@ export component RadarPage inherits Rectangle {
         background: Theme.accent;
         border-width: 2px;
         border-color: Theme.background;
+    }
+
+    // Below the touch area: above it, this scope would swallow the first press on the map.
+    keys := FocusScope {
+        key-pressed(e) => {
+            if e.text == " " { root.toggle-play(); return accept; }
+            if e.text == Key.LeftArrow { root.step(-1); return accept; }
+            if e.text == Key.RightArrow { root.step(1); return accept; }
+            if e.text == "+" || e.text == "=" { root.zoom(0.5, root.width / 2, root.height / 2); return accept; }
+            if e.text == "-" { root.zoom(-0.5, root.width / 2, root.height / 2); return accept; }
+            if e.text == "l" { root.to-live(); return accept; }
+            if e.text == "f" { root.toggle-full(); return accept; }
+            if e.text == "r" { root.reload(); return accept; }
+            if e.text >= "1" && e.text <= "9" { root.pick-view(e.text.to-float() - 1); return accept; }
+            if e.text == "0" { root.pick-view(0); return accept; }
+            reject
+        }
     }
 
     property <length> last-x;
@@ -165,22 +187,6 @@ export component RadarPage inherits Rectangle {
         }
     }
 
-    keys := FocusScope {
-        key-pressed(e) => {
-            if e.text == " " { root.toggle-play(); return accept; }
-            if e.text == Key.LeftArrow { root.step(-1); return accept; }
-            if e.text == Key.RightArrow { root.step(1); return accept; }
-            if e.text == "+" || e.text == "=" { root.zoom(0.5, root.width / 2, root.height / 2); return accept; }
-            if e.text == "-" { root.zoom(-0.5, root.width / 2, root.height / 2); return accept; }
-            if e.text == "l" { root.to-live(); return accept; }
-            if e.text == "f" { root.toggle-full(); return accept; }
-            if e.text == "r" { root.reload(); return accept; }
-            if e.text >= "1" && e.text <= "9" { root.pick-view(e.text.to-float() - 1); return accept; }
-            if e.text == "0" { root.pick-view(0); return accept; }
-            reject
-        }
-    }
-
     ThinBar { y: 0; progress: root.loading; visible: root.loading > 0; }
 
     VerticalLayout {
@@ -202,10 +208,10 @@ export component RadarPage inherits Rectangle {
         HorizontalLayout {
             spacing: 4px;
             alignment: start;
-            Chip { text: "Warnings"; icon: Icons.alert-triangle; has-icon: true; checked: root.layer-alerts; clicked => { root.toggle-layer(0); } }
-            Chip { text: root.clouds-label; icon: Icons.cloud; has-icon: true; checked: root.layer-clouds; clicked => { root.toggle-layer(1); } }
-            Chip { text: "Lightning"; icon: Icons.bolt; has-icon: true; checked: root.layer-lightning; clicked => { root.toggle-layer(2); } }
-            Chip { text: "Wind"; icon: Icons.wind; has-icon: true; checked: root.layer-wind; clicked => { root.toggle-layer(3); } }
+            Chip { text: "Warnings"; tip: "Official DWD warnings by district: the stronger the warning, the darker the color"; icon: Icons.alert-triangle; has-icon: true; checked: root.layer-alerts; clicked => { root.toggle-layer(0); } }
+            Chip { text: root.clouds-label; tip: "Satellite picture of the clouds. New pictures come every three hours; the time is the picture's"; icon: Icons.cloud; has-icon: true; checked: root.layer-clouds; clicked => { root.toggle-layer(1); } }
+            Chip { text: "Lightning"; tip: "Lightning strikes of the last hours, from the DWD"; icon: Icons.bolt; has-icon: true; checked: root.layer-lightning; clicked => { root.toggle-layer(2); } }
+            Chip { text: "Wind"; tip: "Current wind: the lines flow with it, the scale is at the bottom right"; icon: Icons.wind; has-icon: true; checked: root.layer-wind; clicked => { root.toggle-layer(3); } }
         }
     }
 

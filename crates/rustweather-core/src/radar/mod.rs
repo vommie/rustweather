@@ -3,6 +3,7 @@
 pub mod clouds;
 pub mod dwd;
 pub mod engine;
+pub mod layers;
 pub mod motion;
 pub mod outlook;
 pub mod palette;

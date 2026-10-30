@@ -1,0 +1,159 @@
+// The page "Forecast": the next hours as a chart with a legend, and seven days with named columns.
+
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
+import { Card, Icon, TipArea, Weather } from "controls.slint";
+import { DayData, HourData } from "types.slint";
+
+component LegendItem inherits HorizontalLayout {
+    in property <color> swatch;
+    in property <string> text;
+    in property <bool> line;
+    spacing: 5px;
+    Rectangle {
+        width: 14px;
+        Rectangle {
+            y: root.line ? 7px : 2px;
+            height: root.line ? 2px : 12px;
+            background: root.swatch;
+            border-radius: 1px;
+        }
+    }
+    Text { text: root.text; color: Theme.text-muted; font-size: 11px; vertical-alignment: center; }
+}
+
+component HoursChart inherits VerticalLayout {
+    in property <[HourData]> hours;
+    in property <string> path;
+    spacing: 4px;
+    // Time and symbol.
+    HorizontalLayout {
+        for h in root.hours: VerticalLayout {
+            spacing: 2px;
+            Text { text: h.label; color: Theme.text-muted; font-size: 11px; horizontal-alignment: center; }
+            HorizontalLayout {
+                alignment: center;
+                Icon { source: Weather.icon(h.weather); tint: Weather.tint(h.weather); width: 18px; height: 18px; }
+            }
+        }
+    }
+    // Temperature as a curve with its value at each hour, rain as bars from the bottom.
+    Rectangle {
+        height: 120px;
+        Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+        HorizontalLayout {
+            for h in root.hours: Rectangle {
+                Rectangle {
+                    x: parent.width * 0.2;
+                    width: parent.width * 0.6;
+                    y: parent.height - self.height;
+                    height: parent.height * 0.6 * h.rain;
+                    border-radius: 2px;
+                    background: Theme.primary.with-alpha(0.55);
+                }
+            }
+        }
+        Path {
+            width: 100%;
+            height: 100%;
+            commands: root.path;
+            stroke: Theme.accent;
+            stroke-width: 2px;
+            viewbox-x: 0;
+            viewbox-y: 0;
+            viewbox-width: 1000;
+            viewbox-height: 100;
+        }
+        HorizontalLayout {
+            for h in root.hours: Rectangle {
+                Text {
+                    y: parent.height * (1 - h.height) - 18px;
+                    width: 100%;
+                    text: h.temperature;
+                    color: Theme.text;
+                    font-size: 11px;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                }
+                area := TipArea { tip: h.tip; }
+                Rectangle {
+                    background: area.has-hover ? Theme.text.with-alpha(0.06) : transparent;
+                    border-radius: 3px;
+                }
+            }
+        }
+    }
+    // Rain in numbers.
+    HorizontalLayout {
+        for h in root.hours: VerticalLayout {
+            Text { text: h.rain-text; color: Theme.primary; font-size: 10px; horizontal-alignment: center; height: 13px; }
+            Text { text: h.probability; color: Theme.text-muted; font-size: 10px; horizontal-alignment: center; height: 13px; }
+        }
+    }
+}
+
+export component ForecastPage inherits ScrollView {
+    in property <[HourData]> hours;
+    in property <[DayData]> days;
+    in property <string> hours-path;
+    VerticalLayout {
+        padding: 14px;
+        spacing: 10px;
+        alignment: start;
+        Card {
+            HorizontalLayout {
+                spacing: 14px;
+                Text { text: "Next 24 hours"; color: Theme.text-muted; font-size: 12px; font-weight: 600; horizontal-stretch: 1; vertical-alignment: center; }
+                LegendItem { swatch: Theme.accent; line: true; text: "Temperature"; }
+                LegendItem { swatch: Theme.primary; text: "Rain in mm"; }
+                Text { text: "% = chance of rain"; color: Theme.text-muted; font-size: 11px; vertical-alignment: center; }
+            }
+            HoursChart { hours: root.hours; path: root.hours-path; }
+        }
+        Card {
+            title: "Next seven days";
+            // Column heads.
+            HorizontalLayout {
+                spacing: 8px;
+                Text { text: "Day"; color: Theme.text-muted; font-size: 11px; width: 80px; }
+                Text { text: "Weather"; color: Theme.text-muted; font-size: 11px; width: 136px; }
+                Text { text: "Low"; color: Theme.text-muted; font-size: 11px; width: 44px; horizontal-alignment: right; }
+                Text { text: "Temperature range of each day, on the scale of the whole week"; color: Theme.text-muted; font-size: 11px; horizontal-stretch: 1; horizontal-alignment: center; overflow: elide; }
+                Text { text: "High"; color: Theme.text-muted; font-size: 11px; width: 44px; }
+                Text { text: "Rain"; color: Theme.text-muted; font-size: 11px; width: 60px; horizontal-alignment: right; }
+            }
+            for d in root.days: Rectangle {
+                height: 34px;
+                border-radius: 4px;
+                background: row.has-hover ? Theme.surface-hover : transparent;
+                HorizontalLayout {
+                    spacing: 8px;
+                    Text { text: d.label; color: Theme.text; width: 80px; vertical-alignment: center; }
+                    HorizontalLayout {
+                        width: 136px;
+                        spacing: 7px;
+                        Icon { source: Weather.icon(d.weather); tint: Weather.tint(d.weather); width: 20px; height: 20px; y: 7px; }
+                        Text { text: d.condition; color: Theme.text-muted; font-size: 12px; vertical-alignment: center; overflow: elide; }
+                    }
+                    Text { text: d.low; color: Theme.text-muted; width: 44px; horizontal-alignment: right; vertical-alignment: center; }
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        Rectangle { y: 15px; height: 4px; border-radius: 2px; background: Theme.surface-selected; }
+                        Rectangle {
+                            x: parent.width * d.start;
+                            y: 14px;
+                            width: parent.width * (d.end - d.start);
+                            height: 6px;
+                            border-radius: 3px;
+                            background: d.color;
+                        }
+                    }
+                    Text { text: d.high; color: Theme.text; width: 44px; vertical-alignment: center; }
+                    Text { text: d.rain; color: Theme.primary; width: 60px; font-size: 12px; horizontal-alignment: right; vertical-alignment: center; }
+                }
+                row := TipArea { tip: d.tip; }
+            }
+        }
+    }
+}

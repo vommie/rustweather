@@ -27,13 +27,28 @@ export struct NowData {
     rain-line: string,
     tile: color,
     history-path: string,
-    history-range: string,
+    history-fill: string,
+    history-low: string,
+    history-high: string,
+    weather: int,
+    wind-to: float,
+    humidity-share: float,
+    uv-share: float,
+    uv-word: string,
+    air-color: color,
+    pollen-detail: string,
+    sun-share: float,
+    sun-up: bool,
+    daylight: string,
+    moon-share: float,
+    moon-lit: string,
 }
 
-export struct HourData { label: string, temperature: string, rain: float, probability: string, height: float }
-export struct DayData { label: string, condition: string, low: string, high: string, rain: string, start: float, end: float, color: color }
+export struct HourData { label: string, temperature: string, rain: float, rain-text: string, probability: string, height: float, weather: int, tip: string }
+export struct DayData { label: string, condition: string, low: string, high: string, rain: string, start: float, end: float, color: color, weather: int, tip: string }
 export struct AlertData { title: string, text: string, time: string, level: int }
 export struct FrameCell { state: int, forecast: bool }
 export struct CityLabel { name: string, x: length, y: length }
 export struct RainBar { height: float, past: bool }
+export struct LayerRect { x: length, y: length, width: length, height: length }
 export struct ViewChip { name: string, active: bool }

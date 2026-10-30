@@ -61,6 +61,9 @@ pub struct App {
     pub flyout_closed_at: Cell<Instant>,
     pub hover: RefCell<crate::hover::Hover>,
     pub hover_timer: slint::Timer,
+    pub window_timer: slint::Timer,
+    pub shown_view: Cell<View>,
+    pub layer_extents: RefCell<[Option<rustweather_core::map::Extent>; 3]>,
 }
 
 thread_local! {
@@ -156,8 +159,9 @@ impl App {
         let now = models::now(&snapshot, &settings);
         self.main.set_now(now.clone());
         self.flyout.set_now(now);
-        self.main
-            .set_hours(ModelRc::new(VecModel::from(models::hours(&snapshot, 24, 1))));
+        let next_hours = models::hours(&snapshot, 24, 1);
+        self.main.set_hours_path(models::hours_path(&next_hours).into());
+        self.main.set_hours(ModelRc::new(VecModel::from(next_hours)));
         self.flyout
             .set_hours(ModelRc::new(VecModel::from(models::hours(&snapshot, 6, 1))));
         self.main
@@ -202,8 +206,17 @@ impl App {
         if let Some(page) = page {
             self.main.set_page(page);
         }
-        if let Err(e) = self.main.show() {
+        let saved = self.ui.borrow().main_window;
+        if let Err(e) = crate::window_state::show_restored(&self.main, saved) {
             tracing::error!(error = %e, "[App] Could not show the window");
+        }
+        self.update_radar_activity();
+    }
+
+    pub fn open_mini(&self) {
+        let saved = self.ui.borrow().mini_window;
+        if let Err(e) = crate::window_state::show_restored(&self.mini, saved) {
+            tracing::error!(error = %e, "[App] Could not show the mini window");
         }
         self.update_radar_activity();
     }
@@ -218,8 +231,7 @@ impl App {
             "settings" => self.open_settings(None),
             "flyout" => self.toggle_flyout(1000, 760),
             "mini" => {
-                let _ = self.mini.show();
-                self.update_radar_activity();
+                self.open_mini();
             }
             _ => self.open_main(None),
         }
@@ -230,7 +242,8 @@ impl App {
             self.settings_window.set_page(page);
         }
         settings_ui::refresh(self);
-        if let Err(e) = self.settings_window.show() {
+        let saved = self.ui.borrow().settings_window;
+        if let Err(e) = crate::window_state::show_restored(&self.settings_window, saved) {
             tracing::error!(error = %e, "[App] Could not show the settings");
         }
     }
@@ -240,18 +253,21 @@ impl App {
             let _ = self.flyout.hide();
         } else if self.flyout_closed_at.get().elapsed() > Duration::from_millis(300) {
             // A click on the icon first takes the focus away, which already closed it.
-            radar_ui::place_flyout(self, x, y);
+            // Reading the position back from a window that is not on screen yet can give (0, 0), so the wanted place is kept here.
+            let position = radar_ui::flyout_position(self, x, y);
+            self.flyout.window().set_position(position);
             if let Err(e) = self.flyout.show() {
                 tracing::error!(error = %e, "[Flyout] Could not show");
             }
-            // The window manager places a new window itself, so the position is set once more when it is mapped.
-            let weak = self.flyout.as_weak();
-            let position = self.flyout.window().position();
-            slint::Timer::single_shot(Duration::from_millis(60), move || {
-                if let Some(flyout) = weak.upgrade() {
-                    flyout.window().set_position(position);
-                }
-            });
+            // The window manager places a new window itself, so the place is set again once it is mapped.
+            for delay in [30, 150] {
+                let weak = self.flyout.as_weak();
+                slint::Timer::single_shot(Duration::from_millis(delay), move || {
+                    if let Some(flyout) = weak.upgrade() {
+                        flyout.window().set_position(position);
+                    }
+                });
+            }
         }
         self.update_radar_activity();
     }
@@ -480,12 +496,16 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         flyout_closed_at: Cell::new(Instant::now() - Duration::from_secs(5)),
         hover: RefCell::new(crate::hover::Hover::default()),
         hover_timer: slint::Timer::default(),
+        window_timer: slint::Timer::default(),
+        shown_view: Cell::new(view),
+        layer_extents: RefCell::new([None; 3]),
     });
     APP.with(|a| *a.borrow_mut() = Some(Rc::clone(&app)));
 
     radar_ui::wire(&app);
     settings_ui::wire(&app);
     crate::hover::start(&app);
+    crate::window_state::wire(&app);
     app.main.set_page(app.ui.borrow().page);
 
     let control = weather::spawn(

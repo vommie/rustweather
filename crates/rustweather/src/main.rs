@@ -12,6 +12,7 @@ mod radar_ui;
 mod settings_ui;
 mod tray;
 mod weather;
+mod window_state;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
