@@ -2,6 +2,7 @@
 # The full check before a merge: format, lints, tests, and no API key anywhere in the tree.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+scripts/release.sh --check
 cargo fmt --all --check
 systemd-run --user --scope -q -p MemoryMax=16G cargo clippy --workspace --all-targets -j 4 -- -D warnings
 systemd-run --user --scope -q -p MemoryMax=16G cargo test --workspace -j 4
