@@ -14,3 +14,4 @@
 - Desktop notifications for rain, warnings, thunderstorms, frost and heat, with quiet hours.
 - Loading indicators, a disk cache with limits, automatic retries, and a Diagnostics page.
 - Import of the old `weather_tray.json`.
+- App icon: a radar screen in the Breeze manner, with a desktop file.

@@ -177,14 +177,14 @@ def main():
     germany_file, out = sys.argv[1], Path(sys.argv[2])
     (out / "svg").mkdir(parents=True, exist_ok=True)
     drafts = {
-        "a": ("Regenwolke", rain_cloud()),
-        "b": ("Radarschirm", radar()),
-        "c": ("Sonne und Wolke", sun_cloud()),
-        "d": ("Gewitterwolke", storm()),
-        "e": ("Regenschirm", umbrella()),
-        "f": ("Deutschland mit Regen", germany(germany_file)),
-        "g": ("Tropfen mit Radarringen", drop()),
-        "h": ("Radarschirm mit Wolke", radar_cloud()),
+        "a": ("Rain cloud", rain_cloud()),
+        "b": ("Radar screen", radar()),
+        "c": ("Sun and cloud", sun_cloud()),
+        "d": ("Thunder cloud", storm()),
+        "e": ("Umbrella", umbrella()),
+        "f": ("Germany with rain", germany(germany_file)),
+        "g": ("Drop with radar rings", drop()),
+        "h": ("Radar screen with cloud", radar_cloud()),
     }
     for key, (label, body) in drafts.items():
         path = out / "svg" / f"{key}.svg"
