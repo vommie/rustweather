@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Utc};
 use rayon::prelude::*;
 
+use super::clouds::{self, Clouds};
 use super::dwd::{self, Lut, Projector};
 use super::motion::{self, Field};
 use super::palette::{self, Ramp};
@@ -25,6 +26,8 @@ const REFRESH: Duration = Duration::from_secs(5 * 60);
 const SLOW_AFTER: Duration = Duration::from_secs(6);
 const RETRIES: [u64; 4] = [10, 30, 60, 300];
 const OVERLAY_DELAY: Duration = Duration::from_millis(350);
+const CLOUDS_DELAY: Duration = Duration::from_millis(800);
+const CLOUDS_MAX_AGE: Duration = Duration::from_secs(30 * 60);
 const WIND_FRAME: Duration = Duration::from_millis(33);
 const WIND_DELAY: Duration = Duration::from_millis(600);
 const WIND_MAX_AGE: Duration = Duration::from_secs(15 * 60);
@@ -91,6 +94,8 @@ pub enum Event {
     Rain(Picture),
     Labels(Option<Picture>),
     Wind(Option<Picture>),
+    /// The satellite picture and the time it was taken.
+    Clouds(Option<(Picture, DateTime<Utc>)>),
     Cities(Vec<(String, f32, f32)>),
     Timeline {
         frames: Vec<FrameInfo>,
@@ -126,8 +131,11 @@ pub enum Command {
     RvLoaded(Result<Vec<rainviewer::Frame>>),
     OverlayLoaded {
         view: View,
-        clouds: bool,
         result: Result<Vec<u8>>,
+    },
+    CloudsLoaded {
+        view: View,
+        result: Result<Clouds>,
     },
     KeyChecked(bool),
     WindLoaded {
@@ -190,6 +198,9 @@ pub fn start(setup: Setup, events: impl Fn(Event) + Send + 'static) -> Result<Ha
         key_checked: None,
         overlay_due: None,
         away: false,
+        clouds_due: None,
+        clouds_at: None,
+        clouds_busy: false,
         wind: None,
         flow: None,
         wind_at: None,
@@ -240,6 +251,9 @@ struct Worker {
     key_checked: Option<String>,
     overlay_due: Option<Instant>,
     away: bool,
+    clouds_due: Option<Instant>,
+    clouds_at: Option<Instant>,
+    clouds_busy: bool,
     wind: Option<WindField>,
     flow: Option<Flow>,
     wind_at: Option<Instant>,
@@ -268,12 +282,9 @@ pub async fn carto_key_works(http: &Http, key: &str) -> Result<bool> {
     Ok(with_key != without)
 }
 
-/// Warnings, lightning and clouds from the DWD's map server, one picture for the whole view.
-fn overlay_url(view: &View, config: &Config, clouds: bool) -> Option<String> {
+/// Warnings and lightning from the DWD's map server, one picture for the whole view.
+fn overlay_url(view: &View, config: &Config) -> Option<String> {
     let mut layers = Vec::new();
-    if clouds {
-        layers.push("dwd:Satellite_meteosat_1km_euat_rgb_day_hrv_and_night_ir108_3h");
-    }
     if config.alerts_layer {
         layers.push("dwd:Warnungen_Landkreise");
     }
@@ -374,6 +385,7 @@ impl Worker {
                     self.overlay_due = Some(Instant::now() + OVERLAY_DELAY);
                     self.flow = None;
                     self.wind_due = Some(Instant::now() + WIND_DELAY);
+                    self.clouds_due = Some(Instant::now() + CLOUDS_DELAY);
                     if self.kind() != before {
                         self.load_cached();
                         self.fetch();
@@ -396,7 +408,11 @@ impl Worker {
                 self.rain_dirty = true;
                 self.overlay_due = Some(Instant::now());
                 self.wind_due = Some(Instant::now());
+                self.clouds_due = Some(Instant::now());
                 self.check_key();
+                if !self.config.clouds_layer {
+                    self.emit(Event::Clouds(None));
+                }
                 if !self.config.wind_layer {
                     self.flow = None;
                     self.emit(Event::Wind(None));
@@ -425,6 +441,7 @@ impl Worker {
                     self.rain_dirty = true;
                     self.overlay_due = Some(Instant::now());
                     self.wind_due = Some(Instant::now());
+                    self.clouds_due = Some(Instant::now());
                     self.check_key();
                     if self.last_fetch.is_none_or(|t| t.elapsed() >= REFRESH) {
                         self.fetch();
@@ -457,7 +474,7 @@ impl Worker {
                 }
                 Err(e) => self.failed(&e),
             },
-            Command::OverlayLoaded { view, clouds, result } => match result {
+            Command::OverlayLoaded { view, result } => match result {
                 Ok(bytes) if view == self.view => {
                     if let Some(image) = image::load_from_memory(&bytes)
                         .ok()
@@ -469,17 +486,33 @@ impl Worker {
                             height,
                             rgba: Arc::new(image.into_raw()),
                         })));
-                    } else if clouds {
-                        // The map server answers with an error text when its satellite data is out; the others stay.
-                        self.emit(Event::Notice(Notice::Fallback {
-                            text: "The DWD has no cloud picture right now".into(),
-                        }));
-                        self.fetch_overlay(false);
                     }
                 }
                 Ok(_) => {}
                 Err(e) => tracing::warn!(error = %e, "[Radar] A map layer failed"),
             },
+            Command::CloudsLoaded { view, result } => {
+                self.clouds_busy = false;
+                match result {
+                    Ok(c) if view == self.view && self.config.clouds_layer => {
+                        self.clouds_at = Some(Instant::now());
+                        let picture = Picture {
+                            width: c.width,
+                            height: c.height,
+                            rgba: Arc::new(c.rgba),
+                        };
+                        self.emit(Event::Clouds(Some((picture, c.time))));
+                    }
+                    Ok(_) => self.clouds_due = Some(Instant::now()),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "[Radar] Clouds failed");
+                        self.clouds_at = Some(Instant::now());
+                        self.emit(Event::Notice(Notice::Fallback {
+                            text: "No cloud picture right now".into(),
+                        }));
+                    }
+                }
+            }
             Command::WindLoaded { result } => {
                 self.wind_busy = false;
                 self.wind_at = Some(Instant::now());
@@ -661,10 +694,9 @@ impl Worker {
         });
     }
 
-    fn fetch_overlay(&self, clouds: bool) {
+    fn fetch_overlay(&self) {
         let view = self.view;
-        let clouds = clouds && self.config.clouds_layer;
-        let Some(url) = overlay_url(&view, &self.config, clouds) else {
+        let Some(url) = overlay_url(&view, &self.config) else {
             self.emit(Event::Overlay(None));
             return;
         };
@@ -672,8 +704,24 @@ impl Worker {
         self.runtime.spawn(async move {
             let _ = tx.send(Command::OverlayLoaded {
                 view,
-                clouds,
                 result: http.bytes(&url).await,
+            });
+        });
+    }
+
+    fn fetch_clouds(&mut self) {
+        let stale = self.clouds_at.is_some_and(|t| t.elapsed() >= CLOUDS_MAX_AGE);
+        let due = self.clouds_due.is_some_and(|t| t <= Instant::now());
+        if !self.config.clouds_layer || self.clouds_busy || !(due || stale) {
+            return;
+        }
+        self.clouds_due = None;
+        self.clouds_busy = true;
+        let (http, tx, view) = (self.http.clone(), self.tx.clone(), self.view);
+        self.runtime.spawn(async move {
+            let _ = tx.send(Command::CloudsLoaded {
+                view,
+                result: clouds::fetch(&http, &view).await,
             });
         });
     }
@@ -727,11 +775,12 @@ impl Worker {
         if self.wind_at.is_some_and(|t| t.elapsed() >= WIND_MAX_AGE) && self.wind_due.is_none() {
             self.wind_due = Some(Instant::now());
         }
+        self.fetch_clouds();
         self.fetch_wind();
         self.animate_wind();
         if self.overlay_due.is_some_and(|t| t <= Instant::now()) {
             self.overlay_due = None;
-            self.fetch_overlay(true);
+            self.fetch_overlay();
         }
         if let Some(started) = self.fetching
             && started.elapsed() > SLOW_AFTER

@@ -49,6 +49,16 @@ pub fn on_event(app: &App, event: Event) {
         }
         Event::Labels(p) => w.set_labels(p.as_ref().map_or_else(Image::default, image)),
         Event::Wind(p) => w.set_wind(p.as_ref().map_or_else(Image::default, image)),
+        Event::Clouds(found) => match found {
+            Some((p, time)) => {
+                w.set_clouds(image(&p));
+                w.set_clouds_label(format!("Clouds {}", time.with_timezone(&Local).format("%H:%M")).into());
+            }
+            None => {
+                w.set_clouds(Image::default());
+                w.set_clouds_label("Clouds".into());
+            }
+        },
         Event::Cities(list) => {
             let scale = w.window().scale_factor();
             let cities: Vec<CityLabel> = list

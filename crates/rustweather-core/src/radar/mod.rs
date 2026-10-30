@@ -1,5 +1,6 @@
 //! The radar: frames from the DWD grid or RainViewer, the motion between them, and the rain picture of a view.
 
+pub mod clouds;
 pub mod dwd;
 pub mod engine;
 pub mod motion;

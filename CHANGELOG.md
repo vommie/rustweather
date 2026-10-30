@@ -14,6 +14,7 @@
 - Desktop notifications for rain, warnings, thunderstorms, frost and heat, with quiet hours.
 - Loading indicators, a disk cache with limits, automatic retries, and a Diagnostics page.
 - Import of the old `weather_tray.json`.
+- Clouds layer on the radar from Meteosat pictures, with the picture's time on its button.
 - Wind layer on the radar: particles flow with the current wind, colored from calm to stormy.
 - App icon: a radar screen in the Breeze manner, with a desktop file.
 - Settings > Desktop shows whether RustWeather is part of the desktop and installs, repairs or uninstalls the menu entry, the
