@@ -119,6 +119,8 @@ pub struct Store {
     /// Tiles that failed, with the time from which they may be tried again.
     retry_at: Mutex<HashMap<String, Instant>>,
     gate: Arc<Semaphore>,
+    /// The DWD's map server takes seconds per tile. It waits on its own, so maps never queue behind it.
+    map_server_gate: Arc<Semaphore>,
     /// Requests of an older round wait in vain: the map has moved on.
     radar_round: AtomicU64,
     radar_budget: Budget,
@@ -153,6 +155,7 @@ impl Store {
             busy: Mutex::new(HashSet::new()),
             retry_at: Mutex::new(HashMap::new()),
             gate: Arc::new(Semaphore::new(8)),
+            map_server_gate: Arc::new(Semaphore::new(6)),
             radar_round: AtomicU64::new(0),
             radar_budget: Budget {
                 per_minute: 90,
@@ -205,7 +208,12 @@ impl Store {
                 store.busy.lock().remove(&k);
                 return;
             }
-            let Ok(_permit) = store.gate.acquire().await else {
+            let gate = if url.contains("/wms?") {
+                &store.map_server_gate
+            } else {
+                &store.gate
+            };
+            let Ok(_permit) = gate.acquire().await else {
                 return;
             };
             let result = store.fetch(&k, &url, post).await;

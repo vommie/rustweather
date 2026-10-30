@@ -20,22 +20,26 @@ pub type Wanted = (Layer, i32, i64, i64);
 
 pub struct Thumbs {
     view: View,
-    /// Positions in `Basemap::ALL` whose picture is not complete yet.
+    /// The drawn map below the tiles; the same for every picture and not cheap.
+    backdrop: Vec<u8>,
+    /// Positions in `Basemap::ALL` whose picture is not done yet.
     open: Vec<usize>,
     dirty: bool,
     drawn: Option<Instant>,
 }
 
 impl Thumbs {
-    pub fn new(lon: f64, lat: f64) -> Self {
+    pub fn new(lon: f64, lat: f64, dark: bool) -> Self {
+        let view = View {
+            lon,
+            lat,
+            zoom: ZOOM,
+            width: WIDTH,
+            height: HEIGHT,
+        };
         Self {
-            view: View {
-                lon,
-                lat,
-                zoom: ZOOM,
-                width: WIDTH,
-                height: HEIGHT,
-            },
+            view,
+            backdrop: vector::draw(&view, if dark { vector::DARK } else { vector::LIGHT }),
             open: (0..Basemap::ALL.len()).collect(),
             dirty: true,
             drawn: None,
@@ -50,24 +54,31 @@ impl Thumbs {
         self.dirty && !self.open.is_empty() && self.drawn.is_none_or(|t| t.elapsed() >= EVERY)
     }
 
-    /// The pictures that changed, and the tiles still needed.
-    pub fn render(
-        &mut self,
-        store: &Store,
-        carto_key: Option<&str>,
-        dark: bool,
-    ) -> (Vec<(usize, Picture)>, Vec<Wanted>) {
+    /// True while pictures wait for tiles: the engine then looks more often.
+    pub fn busy(&self) -> bool {
+        self.dirty && !self.open.is_empty()
+    }
+
+    /// The pictures that are done, and the tiles still needed. A picture shows only once it is complete: half a map would mislead.
+    pub fn render(&mut self, store: &Store, carto_key: Option<&str>) -> (Vec<(usize, Picture)>, Vec<Wanted>) {
         self.dirty = false;
         self.drawn = Some(Instant::now());
-        let colors = if dark { vector::DARK } else { vector::LIGHT };
         let (mut pictures, mut wanted) = (Vec::new(), Vec::new());
-        let view = self.view;
+        let (view, backdrop) = (self.view, &self.backdrop);
         self.open.retain(|&index| {
-            let mut rgba = vector::draw(&view, colors);
-            let mut missing = Vec::new();
+            let mut rgba = backdrop.clone();
             if let Some(layer) = Basemap::ALL[index].layers(carto_key, false).0 {
-                missing = tiles::compose(&view, &layer, store, &mut rgba, 1.0);
-                wanted.extend(missing.iter().map(|&(z, x, y)| (layer.clone(), z, x, y)));
+                let z = layer.level(view.zoom);
+                let missing: Vec<(i64, i64)> = tiles::visible(&view, &layer, z)
+                    .into_iter()
+                    .map(|(x, y)| (x.rem_euclid(1 << z), y))
+                    .filter(|&(x, y)| store.cached(&layer, z, x, y).is_none())
+                    .collect();
+                if !missing.is_empty() {
+                    wanted.extend(missing.into_iter().map(|(x, y)| (layer.clone(), z, x, y)));
+                    return true;
+                }
+                tiles::compose(&view, &layer, store, &mut rgba, 1.0);
             }
             pictures.push((
                 index,
@@ -77,7 +88,7 @@ impl Thumbs {
                     rgba: Arc::new(rgba),
                 },
             ));
-            !missing.is_empty()
+            false
         });
         (pictures, wanted)
     }
@@ -88,19 +99,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_own_map_needs_no_tiles_and_is_done_at_once() {
+    fn a_map_waits_for_its_tiles_and_the_own_map_for_nothing() {
         let dir = std::env::temp_dir().join(format!("rustweather-thumbs-{}", std::process::id()));
         let store = Store::new(crate::http::Http::new().unwrap(), &dir);
-        let mut thumbs = Thumbs::new(10.0, 51.0);
+        let mut thumbs = Thumbs::new(10.0, 51.0, true);
         assert!(thumbs.due());
-        let (pictures, wanted) = thumbs.render(&store, None, true);
-        assert_eq!(pictures.len(), Basemap::ALL.len());
+        let (pictures, wanted) = thumbs.render(&store, Some("k"));
+        assert_eq!(pictures.iter().map(|p| p.0).collect::<Vec<_>>(), [0]);
         assert!(!wanted.is_empty());
-        assert!(!thumbs.open.contains(&0));
-        assert!(thumbs.open.contains(&1));
-        assert!(!thumbs.due());
+        assert!(!thumbs.due() && !thumbs.busy());
         thumbs.tile_arrived();
+        assert!(thumbs.busy());
         thumbs.drawn = None;
         assert!(thumbs.due());
+    }
+
+    #[test]
+    fn carto_without_a_key_is_the_own_map_and_needs_no_tiles() {
+        let dir = std::env::temp_dir().join(format!("rustweather-thumbs-nokey-{}", std::process::id()));
+        let store = Store::new(crate::http::Http::new().unwrap(), &dir);
+        let mut thumbs = Thumbs::new(10.0, 51.0, true);
+        let (pictures, wanted) = thumbs.render(&store, None);
+        assert_eq!(pictures.len(), 3);
+        assert!(wanted.iter().all(|(layer, ..)| !layer.id.starts_with("carto")));
     }
 }

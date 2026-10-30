@@ -225,7 +225,7 @@ fn on_notice(app: &App, notice: Notice) {
         Notice::BadKey { service } => {
             set_banner(
                 app,
-                &format!("The {service} key was rejected. The own map stands in."),
+                &format!("The {service} key was rejected. The standard map stands in."),
                 true,
                 "Settings",
             );
@@ -239,7 +239,7 @@ fn on_notice(app: &App, notice: Notice) {
         Notice::MissingKey { service } => {
             set_banner(
                 app,
-                &format!("{service} maps need a key. The own map stands in."),
+                &format!("{service} maps need a key. The standard map stands in."),
                 false,
                 "Settings",
             );

@@ -85,7 +85,7 @@ sudo pacman -U ${pkg_name}
 
 The newest version is always at \`${repo_url}/releases/latest/download/${alias_name}\`.
 
-CARTO maps need your own key (Settings > Sources); without one the app uses its own map.
+CARTO maps need your own key (Settings > Sources); without one the app uses its standard map.
 
 Full changelog: ${repo_url}/blob/${tag}/CHANGELOG.md
 EOF

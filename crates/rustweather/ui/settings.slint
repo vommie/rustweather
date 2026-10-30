@@ -133,10 +133,10 @@ export component SettingsWindow inherits Window {
             if root.page == 0: Page {
                 title: "General";
                 Card {
-                    SettingRow { label: "Theme"; Choice { items: ["Follow system", "Dark", "Light"]; current: root.data.theme; selected(i) => { root.set-int("theme", i); } } }
-                    SettingRow { label: "Weather update"; detail: "Minutes between fetches. Paused while the screen is locked, and fetched right away when you are back.";
+                    SettingRow { label: "Theme"; tip: "The app's colors: like the desktop, always dark or always light"; Choice { items: ["Follow system", "Dark", "Light"]; current: root.data.theme; selected(i) => { root.set-int("theme", i); } } }
+                    SettingRow { label: "Weather update"; tip: "How often the temperature is renewed. Never while the screen is locked or a program runs in fullscreen";
                         Choice { items: ["5 minutes", "10 minutes", "15 minutes", "30 minutes", "60 minutes"]; current: root.data.refresh; selected(i) => { root.set-int("refresh", i); } } }
-                    SettingRow { label: "Log detail"; Choice { items: ["Errors", "Warnings", "Info", "Debug"]; current: root.data.log-level; selected(i) => { root.set-int("log-level", i); } } }
+                    SettingRow { label: "Log detail"; tip: "How much goes into the log file. Debug is only for finding a problem"; Choice { items: ["Errors", "Warnings", "Info", "Debug"]; current: root.data.log-level; selected(i) => { root.set-int("log-level", i); } } }
                 }
             }
             if root.page == 1: Page {
@@ -172,9 +172,9 @@ export component SettingsWindow inherits Window {
                     title: "When the pointer rests on the icon";
                     Sw {
                         label: "Show the weather card";
-                        detail: root.data.hover-usable
-                            ? "Instead of the panel's tooltip. Click the icon once, so RustWeather knows where it sits."
-                            : "Needs X11: under Wayland a program cannot see the pointer on the panel.";
+                        tip: root.data.hover-usable
+                            ? "Shows the card instead of the panel's tooltip. Click the icon once, so RustWeather knows where it sits"
+                            : "Needs X11: under Wayland a program cannot see the pointer on the panel";
                         key: "hover-card";
                         on: root.data.hover-card;
                         changed-to(k, v) => { root.set-bool(k, v); }
@@ -182,40 +182,40 @@ export component SettingsWindow inherits Window {
                 }
                 Card {
                     title: "On the icon";
-                    Sw { label: "Blue dot: rain within the hour"; key: "show-rain"; on: root.data.show-rain; changed-to(k, v) => { root.set-bool(k, v); } }
-                    Sw { label: "Yellow triangle: active warning"; key: "show-alert"; on: root.data.show-alert; changed-to(k, v) => { root.set-bool(k, v); } }
-                    Sw { label: "Pale when the data is old"; key: "show-stale"; on: root.data.show-stale; changed-to(k, v) => { root.set-bool(k, v); } }
-                    Sw { label: "Small arrow: getting warmer or colder"; key: "show-trend"; on: root.data.show-trend; changed-to(k, v) => { root.set-bool(k, v); } }
-                    SettingRow { label: "Tile color"; detail: "Empty = the color of the temperature. Example: #1c2128";
+                    Sw { label: "Blue dot: rain within the hour"; tip: "Shows a blue dot on the tray icon when rain is due"; key: "show-rain"; on: root.data.show-rain; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Yellow triangle: active warning"; tip: "Shows a yellow triangle on the tray icon during a warning"; key: "show-alert"; on: root.data.show-alert; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Pale when the data is old"; tip: "Fades the tray icon when the temperature could not be renewed"; key: "show-stale"; on: root.data.show-stale; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Small arrow: getting warmer or colder"; tip: "Shows the trend of the temperature on the tray icon"; key: "show-trend"; on: root.data.show-trend; changed-to(k, v) => { root.set-bool(k, v); } }
+                    SettingRow { label: "Tile color"; tip: "Background of the tray icon as a color like #1c2128. Empty uses the temperature's color";
                         LineEdit { width: 120px; text: root.data.tile-bg; edited(t) => { root.set-text("tile-bg", t); } } }
-                    SettingRow { label: "Digit color";
+                    SettingRow { label: "Digit color"; tip: "Color of the digits as a color like #ffffff. Empty uses white";
                         LineEdit { width: 120px; text: root.data.tile-fg; edited(t) => { root.set-text("tile-fg", t); } } }
                 }
                 Card {
                     title: "In the tooltip";
-                    Sw { label: "Feels like"; key: "line-feels"; on: root.data.line-feels; changed-to(k, v) => { root.set-bool(k, v); } }
-                    Sw { label: "Low and high of today"; key: "line-range"; on: root.data.line-range; changed-to(k, v) => { root.set-bool(k, v); } }
-                    Sw { label: "When rain comes or stops"; key: "line-rain"; on: root.data.line-rain; changed-to(k, v) => { root.set-bool(k, v); } }
-                    Sw { label: "Active warnings"; key: "line-alerts"; on: root.data.line-alerts; changed-to(k, v) => { root.set-bool(k, v); } }
-                    Sw { label: "Wind and gusts"; key: "line-wind"; on: root.data.line-wind; changed-to(k, v) => { root.set-bool(k, v); } }
-                    Sw { label: "Humidity and pressure"; key: "line-humidity"; on: root.data.line-humidity; changed-to(k, v) => { root.set-bool(k, v); } }
-                    Sw { label: "Sunrise or sunset"; key: "line-sun"; on: root.data.line-sun; changed-to(k, v) => { root.set-bool(k, v); } }
-                    Sw { label: "Age of the data"; key: "line-age"; on: root.data.line-age; changed-to(k, v) => { root.set-bool(k, v); } }
-                    Sw { label: "Next update"; key: "line-next"; on: root.data.line-next; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Feels like"; tip: "Adds the felt temperature to the tooltip"; key: "line-feels"; on: root.data.line-feels; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Low and high of today"; tip: "Adds today's lowest and highest temperature to the tooltip"; key: "line-range"; on: root.data.line-range; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "When rain comes or stops"; tip: "Adds when rain starts or ends to the tooltip"; key: "line-rain"; on: root.data.line-rain; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Active warnings"; tip: "Adds current warnings to the tooltip"; key: "line-alerts"; on: root.data.line-alerts; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Wind and gusts"; tip: "Adds wind and gusts to the tooltip"; key: "line-wind"; on: root.data.line-wind; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Humidity and pressure"; tip: "Adds humidity and air pressure to the tooltip"; key: "line-humidity"; on: root.data.line-humidity; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Sunrise or sunset"; tip: "Adds the next sunrise or sunset to the tooltip"; key: "line-sun"; on: root.data.line-sun; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Age of the data"; tip: "Adds how old the measurement is to the tooltip"; key: "line-age"; on: root.data.line-age; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Next update"; tip: "Adds the time of the next update to the tooltip"; key: "line-next"; on: root.data.line-next; changed-to(k, v) => { root.set-bool(k, v); } }
                 }
             }
             if root.page == 3: Page {
                 title: "Radar";
                 Card {
-                    SettingRow { label: "Source"; detail: "Auto uses the DWD over Germany and RainViewer elsewhere.";
+                    SettingRow { label: "Source"; tip: "Where the rain comes from. Auto uses the DWD over Germany and RainViewer elsewhere";
                         Choice { items: ["Auto", "DWD", "RainViewer"]; current: root.data.source; selected(i) => { root.set-int("source", i); } } }
-                    SettingRow { label: "Rain colors"; Choice { items: ["Classic", "Calm", "Blue"]; current: root.data.palette; selected(i) => { root.set-int("palette", i); } } }
-                    SettingRow { label: "Rain opacity"; Slider { width: 200px; minimum: 20; maximum: 100; value: root.data.opacity; moved(v) => { root.set-float("opacity", v); } } }
-                    SettingRow { label: "Speed"; Slider { width: 200px; minimum: 60; maximum: 1000; value: 1060 - root.data.speed; moved(v) => { root.set-float("speed", 1060 - v); } } }
-                    Sw { label: "Play when the radar opens"; key: "autoplay"; on: root.data.autoplay; changed-to(k, v) => { root.set-bool(k, v); } }
-                    Sw { label: "Smooth motion"; key: "smooth"; on: root.data.smooth; changed-to(k, v) => { root.set-bool(k, v); } }
-                    Sw { label: "Repeat"; key: "looping"; on: root.data.looping; changed-to(k, v) => { root.set-bool(k, v); } }
-                    Sw { label: "Place names above the rain"; key: "labels"; on: root.data.labels; changed-to(k, v) => { root.set-bool(k, v); } }
+                    SettingRow { label: "Rain colors"; tip: "The color scale of the rain on the map"; Choice { items: ["Classic", "Calm", "Blue"]; current: root.data.palette; selected(i) => { root.set-int("palette", i); } } }
+                    SettingRow { label: "Rain opacity"; tip: "How strongly the rain covers the map"; Slider { width: 200px; minimum: 20; maximum: 100; value: root.data.opacity; moved(v) => { root.set-float("opacity", v); } } }
+                    SettingRow { label: "Speed"; tip: "How fast the radar plays"; Slider { width: 200px; minimum: 60; maximum: 1000; value: 1060 - root.data.speed; moved(v) => { root.set-float("speed", 1060 - v); } } }
+                    Sw { label: "Play when the radar opens"; tip: "Starts playing as soon as the radar is on screen"; key: "autoplay"; on: root.data.autoplay; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Smooth motion"; tip: "Blends between radar pictures so the rain moves smoothly"; key: "smooth"; on: root.data.smooth; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Repeat"; tip: "Starts over at the end of the timeline"; key: "looping"; on: root.data.looping; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Place names above the rain"; tip: "Keeps place names readable by drawing them over the rain"; key: "labels"; on: root.data.labels; changed-to(k, v) => { root.set-bool(k, v); } }
                 }
             }
             if root.page == 4: Page {
@@ -224,12 +224,12 @@ export component SettingsWindow inherits Window {
                     title: "Weather";
                     SettingRow { label: "Current weather"; detail: "DWD through Bright Sky, no key needed."; }
                     SettingRow { label: "Forecast, air quality, pollen"; detail: "Open-Meteo, no key needed."; }
-                    SettingRow { label: "Station page as a fallback"; detail: "A wetterdienst.de address, read when the DWD data is out. Empty = off."; }
+                    SettingRow { label: "Station page as a fallback"; tip: "A wetterdienst.de address, read when the DWD data is out. Empty turns it off"; }
                     LineEdit { text: root.data.station-url; edited(t) => { root.set-text("station-url", t); } }
                 }
                 Card {
                     title: "CARTO key";
-                    SettingRow { label: "Key"; detail: "Stored in ~/.config/rustweather/secrets.toml, readable only by you."; }
+                    SettingRow { label: "Key"; tip: "Stored in ~/.config/rustweather/secrets.toml, readable only by you"; }
                     key-edit := LineEdit {
                         input-type: password;
                         placeholder-text: root.data.has-carto ? "A key is stored. Type to replace it." : "Paste your key here";
@@ -255,8 +255,8 @@ export component SettingsWindow inherits Window {
                     }
                 }
                 Card {
-                    SettingRow { label: "Largest size"; Choice { items: ["100 MB", "300 MB", "500 MB", "1 GB", "2 GB"]; current: root.data.cache-limit; selected(i) => { root.set-int("cache-limit", i); } } }
-                    SettingRow { label: "Keep radar pictures"; Choice { items: ["6 hours", "24 hours", "3 days", "7 days"]; current: root.data.radar-hours; selected(i) => { root.set-int("radar-hours", i); } } }
+                    SettingRow { label: "Largest size"; tip: "Old map and radar data is removed above this size"; Choice { items: ["100 MB", "300 MB", "500 MB", "1 GB", "2 GB"]; current: root.data.cache-limit; selected(i) => { root.set-int("cache-limit", i); } } }
+                    SettingRow { label: "Keep radar pictures"; tip: "How long past radar pictures stay on the disk"; Choice { items: ["6 hours", "24 hours", "3 days", "7 days"]; current: root.data.radar-hours; selected(i) => { root.set-int("radar-hours", i); } } }
                 }
                 HorizontalLayout {
                     spacing: 6px;
@@ -270,16 +270,16 @@ export component SettingsWindow inherits Window {
                 title: "Alerts";
                 Card {
                     title: "Tell me about";
-                    Sw { label: "Pause all notifications"; key: "al-paused"; on: root.data.al-paused; changed-to(k, v) => { root.set-bool(k, v); } }
-                    Sw { label: "Rain is coming"; key: "al-rain"; on: root.data.al-rain; changed-to(k, v) => { root.set-bool(k, v); } }
-                    Sw { label: "Rain is ending"; key: "al-end"; on: root.data.al-end; changed-to(k, v) => { root.set-bool(k, v); } }
-                    Sw { label: "Official DWD warnings"; key: "al-dwd"; on: root.data.al-dwd; changed-to(k, v) => { root.set-bool(k, v); } }
-                    Sw { label: "Check warnings in the background"; detail: "Without an open window the app only fetches the temperature. This adds one request per update, so warnings reach you there too. Never while the screen is locked or a program runs in fullscreen."; key: "al-background"; on: root.data.al-background; changed-to(k, v) => { root.set-bool(k, v); } }
-                    Sw { label: "Thunderstorms nearby"; key: "al-storm"; on: root.data.al-storm; changed-to(k, v) => { root.set-bool(k, v); } }
-                    Sw { label: "Frost tonight"; key: "al-frost"; on: root.data.al-frost; changed-to(k, v) => { root.set-bool(k, v); } }
-                    Sw { label: "Heat"; key: "al-heat"; on: root.data.al-heat; changed-to(k, v) => { root.set-bool(k, v); } }
-                    SettingRow { label: "DWD warnings from"; Choice { items: ["Every warning", "Significant weather", "Severe weather", "Extreme only"]; current: root.data.al-level; selected(i) => { root.set-int("al-level", i); } } }
-                    SettingRow { label: "Rain warning ahead"; detail: "\{Math.round(root.data.al-lead)} minutes"; Slider { width: 200px; minimum: 5; maximum: 60; value: root.data.al-lead; moved(v) => { root.set-float("al-lead", v); } } }
+                    Sw { label: "Pause all notifications"; tip: "Stops every notification until you turn this off"; key: "al-paused"; on: root.data.al-paused; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Rain is coming"; tip: "Tells you shortly before rain starts here"; key: "al-rain"; on: root.data.al-rain; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Rain is ending"; tip: "Tells you shortly before the rain stops here"; key: "al-end"; on: root.data.al-end; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Official DWD warnings"; tip: "Tells you about warnings from the DWD for your place"; key: "al-dwd"; on: root.data.al-dwd; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Check warnings in the background"; tip: "Also checks DWD warnings with no window open, at one more request per update. Never while locked or in fullscreen"; key: "al-background"; on: root.data.al-background; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Thunderstorms nearby"; tip: "Tells you when thunderstorms are expected in the next hours"; key: "al-storm"; on: root.data.al-storm; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Frost tonight"; tip: "Tells you when it will freeze tonight"; key: "al-frost"; on: root.data.al-frost; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Heat"; tip: "Tells you when it will reach 30 °C or more today"; key: "al-heat"; on: root.data.al-heat; changed-to(k, v) => { root.set-bool(k, v); } }
+                    SettingRow { label: "DWD warnings from"; tip: "The weakest warning level that still notifies you"; Choice { items: ["Every warning", "Significant weather", "Severe weather", "Extreme only"]; current: root.data.al-level; selected(i) => { root.set-int("al-level", i); } } }
+                    SettingRow { label: "Rain warning ahead"; tip: "How long before the rain the notification comes"; detail: "\{Math.round(root.data.al-lead)} minutes"; Slider { width: 200px; minimum: 5; maximum: 60; value: root.data.al-lead; moved(v) => { root.set-float("al-lead", v); } } }
                 }
                 HorizontalLayout {
                     alignment: start;
@@ -287,18 +287,18 @@ export component SettingsWindow inherits Window {
                 }
                 Card {
                     title: "Quiet";
-                    Sw { label: "Quiet at night"; key: "al-night"; on: root.data.al-night; changed-to(k, v) => { root.set-bool(k, v); } }
-                    SettingRow { label: "From"; Choice { items: ["18:00", "19:00", "20:00", "21:00", "22:00", "23:00", "0:00"]; current: root.data.al-from; selected(i) => { root.set-int("al-from", i); } } }
-                    SettingRow { label: "To"; Choice { items: ["5:00", "6:00", "7:00", "8:00", "9:00", "10:00"]; current: root.data.al-to; selected(i) => { root.set-int("al-to", i); } } }
-                    Sw { label: "Severe warnings get through anyway"; key: "al-severe"; on: root.data.al-severe; changed-to(k, v) => { root.set-bool(k, v); } }
-                    Sw { label: "Quiet during fullscreen programs"; key: "al-full"; on: root.data.al-full; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Quiet at night"; tip: "No notifications during the hours below"; key: "al-night"; on: root.data.al-night; changed-to(k, v) => { root.set-bool(k, v); } }
+                    SettingRow { label: "From"; tip: "Start of the quiet hours"; Choice { items: ["18:00", "19:00", "20:00", "21:00", "22:00", "23:00", "0:00"]; current: root.data.al-from; selected(i) => { root.set-int("al-from", i); } } }
+                    SettingRow { label: "To"; tip: "End of the quiet hours"; Choice { items: ["5:00", "6:00", "7:00", "8:00", "9:00", "10:00"]; current: root.data.al-to; selected(i) => { root.set-int("al-to", i); } } }
+                    Sw { label: "Severe warnings get through anyway"; tip: "Severe and extreme warnings ignore the quiet times"; key: "al-severe"; on: root.data.al-severe; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Quiet during fullscreen programs"; tip: "No notifications while a program runs in fullscreen"; key: "al-full"; on: root.data.al-full; changed-to(k, v) => { root.set-bool(k, v); } }
                 }
             }
             if root.page == 7: Page {
                 title: "Units";
                 Card {
-                    SettingRow { label: "Temperature"; Choice { items: ["°C", "°F"]; current: root.data.temp-unit; selected(i) => { root.set-int("temp-unit", i); } } }
-                    SettingRow { label: "Wind"; Choice { items: ["km/h", "m/s", "Beaufort"]; current: root.data.wind-unit; selected(i) => { root.set-int("wind-unit", i); } } }
+                    SettingRow { label: "Temperature"; tip: "Unit for all temperatures"; Choice { items: ["°C", "°F"]; current: root.data.temp-unit; selected(i) => { root.set-int("temp-unit", i); } } }
+                    SettingRow { label: "Wind"; tip: "Unit for all wind speeds"; Choice { items: ["km/h", "m/s", "Beaufort"]; current: root.data.wind-unit; selected(i) => { root.set-int("wind-unit", i); } } }
                 }
             }
             if root.page == 8: Page {
@@ -337,7 +337,7 @@ export component SettingsWindow inherits Window {
                     }
                 }
                 Card {
-                    Sw { label: "Start with the desktop"; detail: "Uninstalling turns this off as well. Your settings, places and keys stay."; key: "autostart"; on: root.data.autostart; changed-to(k, v) => { root.set-bool(k, v); } }
+                    Sw { label: "Start with the desktop"; tip: "Starts RustWeather at login. Uninstalling turns this off, your settings, places and keys stay"; key: "autostart"; on: root.data.autostart; changed-to(k, v) => { root.set-bool(k, v); } }
                 }
             }
             if root.page == 9: Page {

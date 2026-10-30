@@ -157,6 +157,7 @@ pub enum Command {
     PreloadGermany,
     /// The map picker opens around a place, or closes.
     MapThumbs(Option<(f64, f64)>),
+    ThumbTile(Result<()>),
     Close,
     DwdLoaded(Result<Vec<dwd::Frame>>),
     RvLoaded(Result<Vec<rainviewer::Frame>>),
@@ -395,7 +396,7 @@ impl Worker {
         if self.wind_on() {
             return WIND_FRAME;
         }
-        if self.slots.iter().any(|s| s.dirty) {
+        if self.slots.iter().any(|s| s.dirty) || self.thumbs.as_ref().is_some_and(Thumbs::busy) {
             return Duration::from_millis(50);
         }
         Duration::from_secs(1)
@@ -568,14 +569,21 @@ impl Worker {
                     }));
                 }
             }
-            Command::MapThumbs(place) => self.thumbs = place.map(|(lon, lat)| Thumbs::new(lon, lat)),
+            Command::MapThumbs(place) => {
+                self.thumbs = place.map(|(lon, lat)| Thumbs::new(lon, lat, self.config.dark));
+            }
+            Command::ThumbTile(result) => match result {
+                Ok(()) => {
+                    if let Some(thumbs) = &mut self.thumbs {
+                        thumbs.tile_arrived();
+                    }
+                }
+                Err(e) => tracing::debug!(error = %e, "[Radar] A tile of a map preview failed"),
+            },
             Command::TileDone { base, result } => match result {
                 Ok(()) => {
                     if base {
                         self.base_dirty = true;
-                        if let Some(thumbs) = &mut self.thumbs {
-                            thumbs.tile_arrived();
-                        }
                     } else {
                         self.rain_dirty = true;
                         self.report_rv_progress();
@@ -957,12 +965,15 @@ impl Worker {
         let Some(thumbs) = self.thumbs.as_mut().filter(|t| t.due()) else {
             return;
         };
-        let (pictures, wanted) = thumbs.render(&self.store, self.config.carto_key.as_deref(), self.config.dark);
+        let (pictures, wanted) = thumbs.render(&self.store, self.config.carto_key.as_deref());
         for (index, picture) in pictures {
             self.emit(Event::MapThumb { index, picture });
         }
         for (layer, z, x, y) in wanted {
-            self.request(&layer, z, x, y, true);
+            let tx = self.tx.clone();
+            self.store.request(&self.runtime, &layer, z, x, y, move |result| {
+                let _ = tx.send(Command::ThumbTile(result));
+            });
         }
     }
 

@@ -9,7 +9,8 @@ script, for Linux with KDE Plasma.
   rain arrival at your place, a rain curve, a click on the map for exact values, saved views, warnings and lightning as
   layers, a small always-on-top window.
 - **Sources:** DWD through Bright Sky, Open-Meteo, RainViewer outside Germany, a wetterdienst.de station page as a fallback.
-- **Maps:** CARTO (needs your key), OpenStreetMap, or the app's own map, which needs neither key nor network.
+- **Maps:** satellite, topographic, OpenStreetMap and more, picked with a preview right on the radar. CARTO needs your key; the standard
+  map needs neither key nor network.
 
 ## Build
 

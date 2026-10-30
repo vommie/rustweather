@@ -165,7 +165,7 @@ export component Chip inherits Rectangle {
         if root.has-icon: Icon { source: root.icon; width: 14px; height: 14px; y: (parent.height - self.height) / 2;
             tint: root.checked ? Theme.primary : Theme.text-muted; }
         if root.key != "": Text { text: root.key; color: Theme.text-disabled; font-size: 10px; vertical-alignment: center; }
-        Text {
+        if root.text != "": Text {
             text: root.text;
             color: root.checked ? Theme.primary : Theme.text-muted;
             font-size: 12px;
@@ -439,16 +439,19 @@ export component ThinBar inherits Rectangle {
     }
 }
 
-export component SettingRow inherits HorizontalLayout {
+// A tooltip for the whole row: the area holds the row, so it notices the pointer over the switch or list as well.
+export component SettingRow inherits TipArea {
     in property <string> label;
     in property <string> detail;
-    spacing: 10px;
-    min-height: 28px;
-    VerticalLayout {
-        horizontal-stretch: 1;
-        alignment: center;
-        Text { text: root.label; color: Theme.text; font-size: 13px; wrap: word-wrap; }
-        if root.detail != "": Text { text: root.detail; color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
+    HorizontalLayout {
+        spacing: 10px;
+        min-height: 28px;
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            Text { text: root.label; color: Theme.text; font-size: 13px; wrap: word-wrap; }
+            if root.detail != "": Text { text: root.detail; color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
+        }
+        @children
     }
-    @children
 }

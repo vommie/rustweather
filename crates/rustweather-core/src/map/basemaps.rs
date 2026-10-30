@@ -57,7 +57,7 @@ impl Basemap {
 
     pub fn name(self) -> &'static str {
         match self {
-            Self::Own => "Own map",
+            Self::Own => "Standard map",
             Self::Osm => "OpenStreetMap",
             Self::Satellite => "Satellite",
             Self::Sentinel => "Satellite without clouds",
