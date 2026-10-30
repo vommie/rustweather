@@ -49,6 +49,23 @@ async fn wind_grid_answers() {
 
 #[tokio::test]
 #[ignore = "needs the network"]
+async fn cloud_picture_answers() {
+    let http = Http::new().unwrap();
+    let view = rustweather_core::map::View {
+        lon: 10.0,
+        lat: 51.0,
+        zoom: 5.6,
+        width: 1000,
+        height: 700,
+    };
+    let clouds = rustweather_core::radar::clouds::fetch(&http, &view).await.unwrap();
+    println!("clouds from {}", clouds.time);
+    assert_eq!((clouds.width, clouds.height), (500, 350));
+    assert!(clouds.rgba.as_chunks::<4>().0.iter().any(|p| p[3] > 0));
+}
+
+#[tokio::test]
+#[ignore = "needs the network"]
 async fn sources_answer() {
     let http = Http::new().unwrap();
     let current = brightsky::current(&http, &place()).await.unwrap();

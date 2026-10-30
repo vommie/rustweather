@@ -46,7 +46,7 @@ pub struct Status {
 impl Status {
     /// True when there is something of ours to remove.
     pub fn removable(&self) -> bool {
-        self.entry || self.icons > 0 || self.autostart
+        self.entry || self.icons > 0 || (self.autostart && self.state != State::Package)
     }
 
     /// What belongs to the integration: name, whether it is there, a detail.
@@ -355,6 +355,8 @@ mod tests {
         fs::write(system.join(format!("{APP_ID}.desktop")), "").unwrap();
         d.system = vec![system];
         assert_eq!(d.status_for(Path::new("/usr/bin/rustweather")).state, State::Package);
+        d.write_autostart(Path::new("/usr/bin/rustweather")).unwrap();
+        assert!(!d.status_for(Path::new("/usr/bin/rustweather")).removable());
         fs::remove_dir_all(root).unwrap();
     }
 

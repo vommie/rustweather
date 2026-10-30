@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.vommie.rustweather</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>RustWeather</name>
+  <developer id="io.github.vommie">
+    <name>vommie</name>
+  </developer>
+  <summary>The temperature in your tray and a weather radar</summary>
+  <description>
+    <p>
+      RustWeather shows the temperature in the system tray, in a color that matches it, and says when rain is coming. A click opens the
+      weather; a radar that loads at once shows where the rain goes.
+    </p>
+    <ul>
+      <li>Radar from the DWD and RainViewer with free zoom, smooth motion and a two-hour forecast</li>
+      <li>Rain arrival at your place, warnings, lightning and wind as layers</li>
+      <li>Forecast, air quality and pollen, for several places</li>
+      <li>Desktop notifications with quiet hours</li>
+      <li>Keeps working offline with the last data and a map of its own</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">io.github.vommie.rustweather.desktop</launchable>
+  <url type="homepage">https://github.com/vommie/rustweather</url>
+  <url type="bugtracker">https://github.com/vommie/rustweather/issues</url>
+  <categories>
+    <category>Utility</category>
+  </categories>
+  <keywords>
+    <keyword>weather</keyword>
+    <keyword>radar</keyword>
+    <keyword>rain</keyword>
+    <keyword>forecast</keyword>
+    <keyword>tray</keyword>
+  </keywords>
+  <provides>
+    <binary>rustweather</binary>
+  </provides>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="@VERSION@" date="@DATE@" />
+  </releases>
+</component>

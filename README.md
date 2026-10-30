@@ -17,6 +17,14 @@ script, for Linux with KDE Plasma.
 cargo build --release
 ```
 
+## Arch package
+
+```bash
+./build-package.sh
+```
+
+This writes `dist/rustweather-<version>-1-x86_64.pkg.tar.zst`; install it with `sudo pacman -U`.
+
 ## Desktop integration
 
 Settings > Desktop shows the state and installs the application menu entry and the icons for your user, in `~/.local/share`. It

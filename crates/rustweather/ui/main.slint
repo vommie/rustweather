@@ -213,6 +213,8 @@ export component MainWindow inherits Window {
 
     in property <image> base;
     in property <image> overlay;
+    in property <image> clouds;
+    in property <string> clouds-label: "Clouds";
     in property <image> rain;
     in property <image> wind;
     in property <image> labels;
@@ -303,6 +305,8 @@ export component MainWindow inherits Window {
                     visible: root.page == 2;
                     base: root.base;
                     overlay: root.overlay;
+                    clouds: root.clouds;
+                    clouds-label: root.clouds-label;
                     rain: root.rain;
                     wind: root.wind;
                     labels: root.labels;
