@@ -2,7 +2,7 @@
 
 mod alerts;
 mod app;
-mod autostart;
+mod desktop;
 mod instance;
 mod logging;
 mod models;
@@ -49,9 +49,12 @@ pub struct Cli {
     /// Keep all files under this folder (test environment).
     #[arg(long, hide = true)]
     pub home: Option<PathBuf>,
-    /// Open this page at start: now, forecast, radar, alerts.
-    #[arg(long, hide = true)]
+    /// Open a page: now, forecast, radar, alerts, settings.
+    #[arg(long)]
     pub open: Option<String>,
+    /// Desktop integration without the window: install, uninstall or status.
+    #[arg(long, value_name = "ACTION")]
+    pub desktop: Option<String>,
 }
 
 fn main() -> ExitCode {

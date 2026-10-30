@@ -13,3 +13,14 @@ Keywords=weather;radar;rain;temperature;forecast;tray;
 StartupWMClass=io.github.vommie.rustweather
 StartupNotify=true
 SingleMainWindow=true
+Actions=Radar;Settings;
+
+[Desktop Action Radar]
+Name=Radar
+Exec=rustweather --open radar
+Icon=rustweather
+
+[Desktop Action Settings]
+Name=Settings
+Exec=rustweather --open settings
+Icon=rustweather

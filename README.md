@@ -17,6 +17,16 @@ script, for Linux with KDE Plasma.
 cargo build --release
 ```
 
+## Desktop integration
+
+Settings > Desktop shows the state and installs the application menu entry and the icons for your user, in `~/.local/share`. It
+notices a moved program and offers a repair. Uninstall removes them and the autostart, and leaves your settings and keys alone. Without
+the window:
+
+```bash
+rustweather --desktop install
+```
+
 ## API keys
 
 CARTO maps need a key: Settings > Sources. It is stored in `~/.config/rustweather/secrets.toml`, readable only by you.

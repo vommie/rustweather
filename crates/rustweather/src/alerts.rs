@@ -130,6 +130,7 @@ impl Notifier {
             let shown = notify_rust::Notification::new()
                 .appname("RustWeather")
                 .icon("rustweather")
+                .hint(notify_rust::Hint::DesktopEntry(rustweather_core::APP_ID.to_owned()))
                 .summary(&message.title)
                 .body(&message.body)
                 .show();

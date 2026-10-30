@@ -20,6 +20,7 @@ export struct SettingsData {
 }
 
 export struct PlaceRow { name: string, active: bool }
+export struct DesktopRow { name: string, ok: bool, detail: string }
 export struct HealthRow { name: string, state: int, last: string, latency: string, detail: string }
 
 component Sw inherits SettingRow {
@@ -55,6 +56,12 @@ export component SettingsWindow inherits Window {
     in property <[PlaceRow]> places;
     in property <[string]> search-results;
     in property <[HealthRow]> health;
+    in property <string> desktop-title;
+    in property <string> desktop-detail;
+    in property <int> desktop-level;
+    in property <string> desktop-install;
+    in property <bool> desktop-can-remove;
+    in property <[DesktopRow]> desktop-rows;
     in property <string> key-state;
     in property <string> version;
     in property <string> toast;
@@ -75,6 +82,8 @@ export component SettingsWindow inherits Window {
     callback clear-cache();
     callback open-cache();
     callback offline-map();
+    callback install-desktop();
+    callback remove-desktop();
     public function copy-text(text: string) {
         clipboard.text = text;
         clipboard.select-all();
@@ -85,7 +94,8 @@ export component SettingsWindow inherits Window {
     property <[{icon: image, name: string}]> pages: [
         { icon: Icons.settings, name: "General" }, { icon: Icons.map-pin, name: "Places" }, { icon: Icons.bell, name: "Tray" },
         { icon: Icons.map, name: "Radar" }, { icon: Icons.cloud, name: "Sources" }, { icon: Icons.database, name: "Cache" },
-        { icon: Icons.alert-triangle, name: "Alerts" }, { icon: Icons.gauge, name: "Units" }, { icon: Icons.keyboard, name: "Hotkeys" },
+        { icon: Icons.alert-triangle, name: "Alerts" }, { icon: Icons.gauge, name: "Units" }, { icon: Icons.device-desktop, name: "Desktop" },
+        { icon: Icons.keyboard, name: "Hotkeys" },
         { icon: Icons.activity, name: "Diagnostics" }, { icon: Icons.info-circle, name: "About" }];
 
     HorizontalLayout {
@@ -118,7 +128,6 @@ export component SettingsWindow inherits Window {
                     SettingRow { label: "Theme"; Choice { items: ["Follow system", "Dark", "Light"]; current: root.data.theme; selected(i) => { root.set-int("theme", i); } } }
                     SettingRow { label: "Weather update"; detail: "Minutes between fetches. Paused while the screen is locked, and fetched right away when you are back.";
                         Choice { items: ["5 minutes", "10 minutes", "15 minutes", "30 minutes", "60 minutes"]; current: root.data.refresh; selected(i) => { root.set-int("refresh", i); } } }
-                    Sw { label: "Start with the desktop"; key: "autostart"; on: root.data.autostart; changed-to(k, v) => { root.set-bool(k, v); } }
                     SettingRow { label: "Log detail"; Choice { items: ["Errors", "Warnings", "Info", "Debug"]; current: root.data.log-level; selected(i) => { root.set-int("log-level", i); } } }
                 }
             }
@@ -269,6 +278,45 @@ export component SettingsWindow inherits Window {
                 }
             }
             if root.page == 8: Page {
+                title: "Desktop";
+                Card {
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Rectangle {
+                            width: 12px;
+                            Rectangle { y: 4px; width: 12px; height: 12px; border-radius: 6px;
+                                background: root.desktop-level == 1 ? Theme.ok : root.desktop-level == 2 ? Theme.warn : Theme.surface-selected; }
+                        }
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            Text { text: root.desktop-title; color: Theme.text; font-weight: 700; }
+                            Text { text: root.desktop-detail; color: Theme.text-muted; font-size: 12px; wrap: word-wrap; }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        alignment: start;
+                        if root.desktop-install != "": TextButton { text: root.desktop-install; icon: Icons.download; has-icon: true; clicked => { root.install-desktop(); } }
+                        if root.desktop-can-remove: TextButton { text: "Uninstall"; icon: Icons.trash; has-icon: true; clicked => { root.remove-desktop(); } }
+                    }
+                }
+                Card {
+                    title: "What belongs to it";
+                    for r in root.desktop-rows: HorizontalLayout {
+                        spacing: 8px;
+                        Icon { source: r.ok ? Icons.check : Icons.x; width: 14px; height: 14px; y: 2px; tint: r.ok ? Theme.ok : Theme.text-disabled; }
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            Text { text: r.name; color: Theme.text; font-size: 12px; }
+                            if r.detail != "": Text { text: r.detail; color: Theme.text-muted; font-size: 11px; overflow: elide; }
+                        }
+                    }
+                }
+                Card {
+                    Sw { label: "Start with the desktop"; detail: "Uninstalling turns this off as well. Your settings, places and keys stay."; key: "autostart"; on: root.data.autostart; changed-to(k, v) => { root.set-bool(k, v); } }
+                }
+            }
+            if root.page == 9: Page {
                 title: "Hotkeys";
                 Card {
                     title: "In the radar";
@@ -279,7 +327,7 @@ export component SettingsWindow inherits Window {
                     }
                 }
             }
-            if root.page == 9: Page {
+            if root.page == 10: Page {
                 title: "Diagnostics";
                 Card {
                     for h in root.health: HorizontalLayout {
@@ -303,7 +351,7 @@ export component SettingsWindow inherits Window {
                     TextButton { text: "Open log"; icon: Icons.file-text; has-icon: true; clicked => { root.open-log(); } }
                 }
             }
-            if root.page == 10: Page {
+            if root.page == 11: Page {
                 title: "About";
                 Card {
                     Text { text: "RustWeather " + root.version; color: Theme.text; font-weight: 700; }

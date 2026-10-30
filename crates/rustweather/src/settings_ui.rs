@@ -11,7 +11,8 @@ use rustweather_core::sources::geocode;
 use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
 
 use crate::app::{App, with_app};
-use crate::{HealthRow, PlaceRow, SettingsData, Theme, autostart};
+use crate::desktop::State;
+use crate::{DesktopRow, HealthRow, PlaceRow, SettingsData, Theme};
 
 const REFRESH: [u32; 5] = [5, 10, 15, 30, 60];
 const LOG_LEVELS: [&str; 4] = ["error", "warn", "info", "debug"];
@@ -44,7 +45,7 @@ fn data(app: &App, s: &Settings) -> SettingsData {
             ThemeMode::Light => 2,
         },
         refresh: index_of(&REFRESH, &s.general.refresh_minutes, 1),
-        autostart: autostart::enabled(),
+        autostart: app.desktop.autostart_enabled(),
         log_level: index_of(&LOG_LEVELS, &s.general.log_level.as_str(), 2),
         station_url: s.general.station_url.as_str().into(),
         tile_bg: s.tray.background.as_str().into(),
@@ -130,6 +131,60 @@ pub fn refresh(app: &App) {
     window.set_version(env!("CARGO_PKG_VERSION").into());
     drop(s);
     refresh_health(app);
+    refresh_desktop(app);
+}
+
+/// The Desktop page: what is installed, and what the buttons can do.
+pub fn refresh_desktop(app: &App) {
+    let window = &app.settings_window;
+    let status = app.desktop.status();
+    let (title, detail, level, install) = match status.state {
+        State::Installed => ("Installed", "RustWeather is part of your desktop.", 1, "Install again"),
+        State::Missing => (
+            "Not installed",
+            "Add RustWeather to the application menu and give it its icon.",
+            0,
+            "Install",
+        ),
+        State::Outdated => (
+            "Needs repair",
+            "The menu entry belongs to a program in another place, or parts are missing.",
+            2,
+            "Repair",
+        ),
+        State::Package => (
+            "Installed by a package",
+            "Your package manager takes care of the menu entry and the icons.",
+            1,
+            "",
+        ),
+    };
+    window.set_desktop_title(title.into());
+    window.set_desktop_detail(detail.into());
+    window.set_desktop_level(level);
+    window.set_desktop_install(install.into());
+    window.set_desktop_can_remove(status.removable());
+    let rows: Vec<DesktopRow> = status
+        .rows()
+        .into_iter()
+        .map(|(name, ok, detail)| DesktopRow {
+            name: name.into(),
+            ok,
+            detail: detail.into(),
+        })
+        .collect();
+    window.set_desktop_rows(ModelRc::new(VecModel::from(rows)));
+    let mut data = window.get_data();
+    data.autostart = app.desktop.autostart_enabled();
+    window.set_data(data);
+}
+
+fn desktop_done(app: &App, result: std::io::Result<()>, done: &str) {
+    match result {
+        Ok(()) => app.toast(done, 1),
+        Err(e) => app.toast(&format!("Desktop integration failed: {e}"), 3),
+    }
+    refresh_desktop(app);
 }
 
 pub fn refresh_health(app: &App) {
@@ -266,9 +321,10 @@ pub fn wire(app: &Rc<App>) {
     }
     on!(on_set_bool, |app, key, value| {
         if key == "autostart" {
-            if let Err(e) = autostart::set(value) {
+            if let Err(e) = app.desktop.set_autostart(value) {
                 app.toast(&format!("Could not change the autostart: {e}"), 3);
             }
+            refresh_desktop(&app);
         } else {
             set_bool(&mut app.settings.borrow_mut(), &key, value);
             apply(&app);
@@ -397,6 +453,18 @@ pub fn wire(app: &Rc<App>) {
     });
     on!(on_open_log, |app| {
         app.open_log();
+    });
+    on!(on_install_desktop, |app| {
+        let result = app.desktop.install();
+        desktop_done(&app, result, "RustWeather is now part of your desktop.");
+    });
+    on!(on_remove_desktop, |app| {
+        let result = app.desktop.uninstall();
+        desktop_done(
+            &app,
+            result,
+            "Menu entry, icons and autostart are removed. Your settings stay.",
+        );
     });
     on!(on_clear_cache, |app| {
         let tiles_dir = app.paths.cache.join("tiles");
