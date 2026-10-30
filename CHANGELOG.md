@@ -5,6 +5,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-10-30
+
 ### Added
 
 - The status line names a service that does not answer as it should, like a reached limit, and leads to the Network page.
@@ -126,7 +128,8 @@ First release, replacing the `weather_tray.py` script.
 - Arch package with `build-package.sh`.
 - The application menu entry offers Radar and Settings as actions; a second start opens what it asks for.
 
-[Unreleased]: https://github.com/vommie/rustweather/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/vommie/rustweather/compare/v0.1.5...HEAD
+[0.1.5]: https://github.com/vommie/rustweather/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/vommie/rustweather/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/vommie/rustweather/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/vommie/rustweather/compare/v0.1.1...v0.1.2
