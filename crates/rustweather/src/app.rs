@@ -182,6 +182,12 @@ impl App {
         };
         self.presence
             .send_if_modified(|old| std::mem::replace(old, presence) != presence);
+        let forecast_open = presence == Presence::Active && on_screen(self.main.window()) && self.main.get_page() == 1;
+        if let Some(control) = self.control.borrow().as_ref() {
+            control
+                .forecast_open
+                .send_if_modified(|old| std::mem::replace(old, forecast_open) != forecast_open);
+        }
         if self.quiet.replace(quiet) != quiet {
             self.radar.send(Command::Away(quiet));
         }

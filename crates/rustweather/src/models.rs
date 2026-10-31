@@ -287,8 +287,8 @@ pub fn hours(snapshot: &Snapshot, count: usize, step: usize) -> Vec<HourData> {
                 } else {
                     SharedString::default()
                 },
-                probability: if h.probability >= 10.0 {
-                    s(format!("{:.0} %", h.probability))
+                probability: if h.probability.unwrap_or(0.0) >= 10.0 {
+                    s(format!("{:.0} %", h.probability.unwrap_or(0.0)))
                 } else {
                     SharedString::default()
                 },
@@ -299,7 +299,7 @@ pub fn hours(snapshot: &Snapshot, count: usize, step: usize) -> Vec<HourData> {
                     model::condition(h.code),
                     h.temperature,
                     h.precipitation,
-                    h.probability
+                    h.probability.unwrap_or(0.0)
                 )),
             }
         })

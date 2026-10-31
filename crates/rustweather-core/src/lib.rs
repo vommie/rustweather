@@ -1,5 +1,6 @@
 //! RustWeather without any UI: settings, weather sources, the radar engine, the map, the tray picture.
 
+pub mod archive;
 pub mod color;
 pub mod error;
 pub mod http;

@@ -3,6 +3,7 @@
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
+use crate::archive::Measured;
 use crate::error::Result;
 use crate::http::Http;
 use crate::model::{Alert, Current};
@@ -72,6 +73,59 @@ pub async fn current(http: &Http, place: &Place) -> Result<Current> {
         gust_kmh: w.wind_gust_speed_10,
         cloud_cover: w.cloud_cover,
     })
+}
+
+#[derive(Deserialize, Default)]
+struct HistoryAnswer {
+    #[serde(default)]
+    weather: Vec<HistoryHour>,
+}
+
+#[derive(Deserialize)]
+struct HistoryHour {
+    timestamp: DateTime<Utc>,
+    temperature: Option<f32>,
+    precipitation: Option<f32>,
+    wind_speed: Option<f32>,
+    wind_gust_speed: Option<f32>,
+    relative_humidity: Option<f32>,
+    cloud_cover: Option<f32>,
+    pressure_msl: Option<f32>,
+}
+
+/// What stations measured from one moment to another, hour by hour.
+pub async fn history(
+    http: &Http,
+    place: &Place,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+) -> Result<Vec<(DateTime<Utc>, Measured)>> {
+    let url = format!(
+        "https://api.brightsky.dev/weather?lat={}&lon={}&date={}&last_date={}",
+        place.lat,
+        place.lon,
+        from.format("%Y-%m-%dT%H:00:00%%2B00:00"),
+        to.format("%Y-%m-%dT%H:00:00%%2B00:00")
+    );
+    let answer: HistoryAnswer = http.json(&url).await?;
+    Ok(answer
+        .weather
+        .into_iter()
+        .map(|h| {
+            (
+                h.timestamp,
+                Measured {
+                    temperature: h.temperature,
+                    rain: h.precipitation,
+                    wind: h.wind_speed,
+                    gust: h.wind_gust_speed,
+                    humidity: h.relative_humidity,
+                    cloud: h.cloud_cover,
+                    pressure: h.pressure_msl,
+                },
+            )
+        })
+        .collect())
 }
 
 #[derive(Deserialize)]
