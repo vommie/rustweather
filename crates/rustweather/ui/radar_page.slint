@@ -402,8 +402,7 @@ export component RadarPage inherits Rectangle {
             Text { text: root.probe-title; color: Theme.text; font-size: 12px; font-weight: 600; }
             Text { text: root.probe-text; color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
         }
-        TipArea {
-            tip: "Right-click to close";
+        TouchArea {
             pointer-event(e) => {
                 if e.button == PointerEventButton.right && e.kind == PointerEventKind.down { root.probe-close(); }
             }

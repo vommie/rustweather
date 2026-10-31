@@ -6,7 +6,7 @@ import { Icons } from "icons.slint";
 import { Card, Choice, Icon, IconButton, SettingRow, Slider, Switch, TextButton } from "controls.slint";
 
 export struct SettingsData {
-    theme: int, refresh: int, autostart: bool, log-level: int, station-url: string,
+    theme: int, refresh: int, forecast: int, autostart: bool, log-level: int, station-url: string,
     tile-bg: string, tile-fg: string, hover-card: bool, hover-usable: bool,
     show-rain: bool, show-alert: bool, show-stale: bool, show-trend: bool,
     line-feels: bool, line-range: bool, line-rain: bool, line-alerts: bool, line-wind: bool, line-humidity: bool,
@@ -125,6 +125,8 @@ export component SettingsPage inherits Rectangle {
                     SettingRow { label: "Theme"; tip: "The app's colors: like the desktop, always dark or always light"; Choice { items: ["Follow system", "Dark", "Light"]; current: SettingsState.data.theme; selected(i) => { SettingsState.set-int("theme", i); } } }
                     SettingRow { label: "Weather update"; tip: "How often the temperature is renewed. Never while the screen is locked or a program runs in fullscreen";
                         Choice { items: ["5 minutes", "10 minutes", "15 minutes", "30 minutes", "60 minutes"]; current: SettingsState.data.refresh; selected(i) => { SettingsState.set-int("refresh", i); } } }
+                    SettingRow { label: "Forecast update"; tip: "How often the long forecast is fetched while the app is in use. The weather models do not change much faster";
+                        Choice { items: ["30 minutes", "1 hour", "2 hours", "3 hours", "6 hours"]; current: SettingsState.data.forecast; selected(i) => { SettingsState.set-int("forecast", i); } } }
                     SettingRow { label: "Log detail"; tip: "How much goes into the log file. Debug is only for finding a problem"; Choice { items: ["Errors", "Warnings", "Info", "Debug"]; current: SettingsState.data.log-level; selected(i) => { SettingsState.set-int("log-level", i); } } }
                 }
             }

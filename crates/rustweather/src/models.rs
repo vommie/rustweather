@@ -1,16 +1,16 @@
 //! Turns weather data into what the windows show.
 
-use chrono::{DateTime, Datelike as _, Local, Timelike as _, Utc};
+use chrono::{DateTime, Local, Timelike as _, Utc};
 use rustweather_core::model::{self, Forecast};
-use rustweather_core::settings::{Settings, TempUnit, WindUnit};
-use rustweather_core::tooltip::{self, rain_line, temperature as temp_text};
+use rustweather_core::settings::{Settings, TempUnit};
+use rustweather_core::tooltip::{self, rain_line, temperature as temp_text, wind};
 use rustweather_core::tray_icon::Look;
 use rustweather_core::{color, color::Rgb};
 use slint::{Color, SharedString};
 
 use crate::tray::TrayData;
 use crate::weather::Snapshot;
-use crate::{AlertData, DayData, HourData, NowData, RainBar};
+use crate::{AlertData, HourData, NowData, RainBar};
 
 const STALE_MINUTES: i64 = 60;
 
@@ -24,14 +24,6 @@ fn s(text: impl Into<SharedString>) -> SharedString {
 
 fn opt(value: Option<f32>, format: impl Fn(f32) -> String) -> SharedString {
     value.map_or_else(|| s("–"), |v| s(format(v)))
-}
-
-fn wind(kmh: f32, unit: WindUnit) -> String {
-    match unit {
-        WindUnit::Kmh => format!("{kmh:.0} km/h"),
-        WindUnit::Ms => format!("{:.1} m/s", kmh / 3.6),
-        WindUnit::Beaufort => format!("{:.0} Bft", ((kmh / 3.6) / 0.836).powf(2.0 / 3.0).min(12.0)),
-    }
 }
 
 fn compass(degrees: f32) -> &'static str {
@@ -287,8 +279,8 @@ pub fn hours(snapshot: &Snapshot, count: usize, step: usize) -> Vec<HourData> {
                 } else {
                     SharedString::default()
                 },
-                probability: if h.probability >= 10.0 {
-                    s(format!("{:.0} %", h.probability))
+                probability: if h.probability.unwrap_or(0.0) >= 10.0 {
+                    s(format!("{:.0} %", h.probability.unwrap_or(0.0)))
                 } else {
                     SharedString::default()
                 },
@@ -299,74 +291,9 @@ pub fn hours(snapshot: &Snapshot, count: usize, step: usize) -> Vec<HourData> {
                     model::condition(h.code),
                     h.temperature,
                     h.precipitation,
-                    h.probability
+                    h.probability.unwrap_or(0.0)
                 )),
             }
-        })
-        .collect()
-}
-
-/// The temperature curve through the hour columns, on a 1000 × 100 canvas.
-pub fn hours_path(hours: &[HourData]) -> String {
-    let n = hours.len().max(1) as f32;
-    hours
-        .iter()
-        .enumerate()
-        .map(|(i, h)| {
-            format!(
-                "{}{:.1} {:.1}",
-                if i == 0 { "M" } else { " L" },
-                (i as f32 + 0.5) / n * 1000.0,
-                (1.0 - h.height) * 100.0
-            )
-        })
-        .collect()
-}
-
-pub fn days(snapshot: &Snapshot, settings: &Settings) -> Vec<DayData> {
-    let Some(forecast) = &snapshot.forecast else {
-        return Vec::new();
-    };
-    let unit = settings.units.temperature;
-    let today = Local::now().date_naive();
-    let shown: Vec<_> = forecast
-        .days
-        .iter()
-        .filter(|d| d.date.is_some_and(|x| x >= today))
-        .collect();
-    let low = shown.iter().map(|d| d.min).fold(f32::MAX, f32::min);
-    let high = shown.iter().map(|d| d.max).fold(f32::MIN, f32::max);
-    let span = (high - low).max(1.0);
-    shown
-        .iter()
-        .map(|d| DayData {
-            label: s(d.date.map_or(String::new(), |x| {
-                if x == today {
-                    "Today".to_owned()
-                } else {
-                    format!("{} {}.", x.format("%a"), x.day())
-                }
-            })),
-            condition: s(model::condition(d.code)),
-            low: s(temp_text(d.min, unit)),
-            high: s(temp_text(d.max, unit)),
-            rain: if d.precipitation >= 0.1 {
-                s(format!("{:.1} mm", d.precipitation))
-            } else {
-                SharedString::default()
-            },
-            start: (d.min - low) / span,
-            end: (d.max - low) / span,
-            color: slint_color(color::temperature((d.min + d.max) / 2.0)),
-            weather: weather_kind(d.code, false),
-            tip: s(format!(
-                "{}: {}, {} to {}, {:.1} mm of rain",
-                d.date.map_or(String::new(), |x| x.format("%A").to_string()),
-                model::condition(d.code),
-                temp_text(d.min, unit),
-                temp_text(d.max, unit),
-                d.precipitation
-            )),
         })
         .collect()
 }
@@ -496,6 +423,7 @@ pub fn tray(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rustweather_core::settings::WindUnit;
 
     #[test]
     fn compass_and_moon() {

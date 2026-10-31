@@ -1,159 +1,449 @@
-// The page "Forecast": the next hours as a chart with a legend, and seven days with named columns.
+// The page "Forecast": a band of time from a week ago to the end of the forecast, and the days under it. Rust draws, this page shows and asks.
 
-import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
-import { Card, Icon, TipArea, Weather } from "controls.slint";
-import { DayData, HourData } from "types.slint";
+import { ScrollView } from "std-widgets.slint";
+import { Card, Chip, Icon, IconButton, Tips, TipArea, Weather } from "controls.slint";
 
-component LegendItem inherits HorizontalLayout {
-    in property <color> swatch;
-    in property <string> text;
-    in property <bool> line;
-    spacing: 5px;
-    Rectangle {
-        width: 14px;
-        Rectangle {
-            y: root.line ? 7px : 2px;
-            height: root.line ? 2px : 12px;
-            background: root.swatch;
-            border-radius: 1px;
-        }
-    }
-    Text { text: root.text; color: Theme.text-muted; font-size: 11px; vertical-alignment: center; }
+export struct TimelineShape { commands: string, stroke: color, fill: color, width: float }
+export struct TimelineLabel { x: length, y: length, text: string, color: color, plain: bool, bold: bool, right: bool }
+export struct FilterChip { name: string, tip: string, color: color, on: bool, index: int }
+export struct FilterRow { items: [FilterChip] }
+export struct FactCard { title: string, value: string, slot: int }
+export struct SpanChip { name: string, hours: int, on: bool }
+export struct DayCard {
+    label: string, weather: int, high: string, low: string, high-color: color, curve: string, rain: string, chance: string, gust: string,
+    sun: string, past: bool, today: bool, slot: int, start: float, end: float, tip: string,
 }
 
-component HoursChart inherits VerticalLayout {
-    in property <[HourData]> hours;
-    in property <string> path;
-    spacing: 4px;
-    // Time and symbol.
-    HorizontalLayout {
-        for h in root.hours: VerticalLayout {
-            spacing: 2px;
-            Text { text: h.label; color: Theme.text-muted; font-size: 11px; horizontal-alignment: center; }
-            HorizontalLayout {
-                alignment: center;
-                Icon { source: Weather.icon(h.weather); tint: Weather.tint(h.weather); width: 18px; height: 18px; }
+/// What the page shows and asks. Rust fills it.
+export global ForecastState {
+    in property <string> sentence;
+    in property <string> stamp;
+    in property <string> stamp-tip;
+    in property <[FactCard]> facts;
+    in property <[SpanChip]> spans;
+    in property <[FilterRow]> filters;
+    in property <[TimelineShape]> shapes;
+    in property <[TimelineLabel]> labels;
+    in property <length> band-height: 200px;
+    in property <length> now-x: -10px;
+    in property <string> overview;
+    in property <float> window-start;
+    in property <float> window-end;
+    in property <float> now-share;
+    in property <length> hover-x: -10px;
+    in property <string> tip-title;
+    in property <[string]> tip-lines;
+    in property <[DayCard]> days;
+    in property <int> today-index;
+    in-out property <int> day-view;
+    callback resized(length);
+    callback pan(length);
+    callback pan-done();
+    callback zoom(float, length);
+    callback hover(length);
+    callback hover-end();
+    callback seek(float);
+    callback pick-span(int);
+    callback to-now();
+    callback page(int);
+    callback toggle(int);
+    callback jump(int);
+    callback view-chosen(int);
+}
+
+component Filter inherits Rectangle {
+    in property <FilterChip> chip;
+    callback clicked();
+    height: 22px;
+    width: row.preferred-width;
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: root.chip.on ? root.chip.color : Theme.border;
+    background: Theme.surface;
+    row := HorizontalLayout {
+        padding-left: 6px;
+        padding-right: 7px;
+        spacing: 4px;
+        Rectangle {
+            width: 10px;
+            Rectangle { y: (parent.height - 3px) / 2; height: 3px; border-radius: 1px; background: root.chip.on ? root.chip.color : Theme.text-disabled; }
+        }
+        Text { text: root.chip.name; color: root.chip.on ? Theme.text : Theme.text-disabled; font-size: 11px; vertical-alignment: center; }
+    }
+    TipArea {
+        tip: root.chip.tip;
+        mouse-cursor: pointer;
+        clicked => {
+            Tips.show = false;
+            root.clicked();
+        }
+    }
+}
+
+component Tile inherits Rectangle {
+    in property <DayCard> day;
+    in property <bool> curve;
+    callback clicked();
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: root.day.today ? Theme.primary : Theme.border;
+    background: area.has-hover ? Theme.surface-hover : Theme.surface;
+    opacity: root.day.past ? 0.75 : 1;
+    VerticalLayout {
+        padding: 8px;
+        spacing: 3px;
+        alignment: start;
+        Text { text: root.day.label; color: root.day.today ? Theme.primary : Theme.text; font-size: 12px; font-weight: 600; horizontal-alignment: center; }
+        HorizontalLayout {
+            alignment: center;
+            spacing: 10px;
+            Icon { source: Weather.icon(root.day.weather); tint: Weather.tint(root.day.weather); width: 26px; height: 26px; y: 3px; }
+            VerticalLayout {
+                Text { text: root.day.high; color: root.day.high-color; font-size: 18px; font-weight: 700; }
+                Text { text: root.day.low; color: Theme.text-muted; font-size: 12px; }
+            }
+        }
+        if root.curve: Rectangle {
+            height: 28px;
+            Path {
+                x: (parent.width - self.width) / 2;
+                width: 100px;
+                height: 30px;
+                viewbox-x: 0;
+                viewbox-y: 0;
+                viewbox-width: 100;
+                viewbox-height: 30;
+                commands: root.day.curve;
+                stroke: Theme.accent;
+                stroke-width: 1.6px;
+            }
+        }
+        if root.day.rain != "": Text { text: root.day.rain; color: Theme.primary; font-size: 11px; horizontal-alignment: center; }
+        if root.day.chance != "": Text { text: root.day.chance; color: Theme.text-muted; font-size: 11px; horizontal-alignment: center; }
+        if root.day.gust != "": Text { text: root.day.gust; color: Theme.text-muted; font-size: 11px; horizontal-alignment: center; }
+        if root.day.sun != "": Text { text: root.day.sun; color: Theme.text-muted; font-size: 11px; horizontal-alignment: center; }
+    }
+    area := TipArea {
+        tip: root.day.tip;
+        mouse-cursor: pointer;
+        clicked => {
+            Tips.show = false;
+            root.clicked();
+        }
+    }
+}
+
+// A row of days that keeps a fair width, and slides sideways when the window has no room for it.
+component DayRow inherits Flickable {
+    in property <length> cell;
+    interactive: true;
+    content-width: ForecastState.days.length * root.cell;
+    content-height: root.height;
+    property <bool> placed;
+    property <int> today: ForecastState.today-index;
+    // Measured days arrive after the forecast and push today along.
+    changed today => { self.placed = false; }
+    // The first look starts at yesterday, once the row knows its width.
+    Timer {
+        interval: 1ms;
+        running: !root.placed;
+        triggered => {
+            if root.width > 0 && ForecastState.days.length > 0 {
+                root.placed = true;
+                root.content-x = min(0px, max(root.width - root.content-width, -((ForecastState.today-index - 1) * root.cell)));
             }
         }
     }
-    // Temperature as a curve with its value at each hour, rain as bars from the bottom.
-    Rectangle {
-        height: 120px;
-        Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
-        HorizontalLayout {
-            for h in root.hours: Rectangle {
-                Rectangle {
-                    x: parent.width * 0.2;
-                    width: parent.width * 0.6;
-                    y: parent.height - self.height;
-                    height: parent.height * 0.6 * h.rain;
-                    border-radius: 2px;
-                    background: Theme.primary.with-alpha(0.55);
-                }
-            }
+    @children
+}
+
+component Columns inherits DayRow {
+    property <length> scale: root.height - 64px;
+    for d[i] in ForecastState.days: Rectangle {
+        x: i * root.cell;
+        width: root.cell;
+        height: root.height;
+        opacity: d.past ? 0.75 : 1;
+        property <length> bottom: root.height - 22px;
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            width: min(30px, parent.width * 0.5);
+            y: parent.bottom - 14px - root.scale * d.end;
+            height: max(4px, root.scale * (d.end - d.start));
+            border-radius: 5px;
+            background: d.high-color;
         }
-        Path {
-            width: 100%;
-            height: 100%;
-            commands: root.path;
-            stroke: Theme.accent;
-            stroke-width: 2px;
-            viewbox-x: 0;
-            viewbox-y: 0;
-            viewbox-width: 1000;
-            viewbox-height: 100;
-        }
-        HorizontalLayout {
-            for h in root.hours: Rectangle {
-                Text {
-                    y: parent.height * (1 - h.height) - 18px;
-                    width: 100%;
-                    text: h.temperature;
-                    color: Theme.text;
-                    font-size: 11px;
-                    font-weight: 600;
-                    horizontal-alignment: center;
-                }
-                area := TipArea { tip: h.tip; }
-                Rectangle {
-                    background: area.has-hover ? Theme.text.with-alpha(0.06) : transparent;
-                    border-radius: 3px;
-                }
+        Text { y: parent.bottom - 14px - root.scale * d.end - 16px; width: 100%; text: d.high; color: Theme.text; font-size: 12px; font-weight: 700; horizontal-alignment: center; }
+        Text { y: parent.bottom - 14px - root.scale * d.start; width: 100%; text: d.low; color: Theme.text-muted; font-size: 11px; horizontal-alignment: center; }
+        Text { y: parent.bottom + 4px; width: 100%; text: d.label; color: d.today ? Theme.primary : Theme.text; font-size: 11px; horizontal-alignment: center; }
+        TipArea {
+            tip: d.tip;
+            mouse-cursor: pointer;
+            clicked => {
+                Tips.show = false;
+                ForecastState.jump(d.slot);
             }
         }
     }
-    // Rain in numbers.
-    HorizontalLayout {
-        for h in root.hours: VerticalLayout {
-            Text { text: h.rain-text; color: Theme.primary; font-size: 10px; horizontal-alignment: center; height: 13px; }
-            Text { text: h.probability; color: Theme.text-muted; font-size: 10px; horizontal-alignment: center; height: 13px; }
+}
+
+component Bars inherits VerticalLayout {
+    spacing: 3px;
+    for d[i] in ForecastState.days: Rectangle {
+        height: 22px;
+        opacity: d.past ? 0.75 : 1;
+        HorizontalLayout {
+            spacing: 8px;
+            Text { width: 64px; text: d.label; color: d.today ? Theme.primary : Theme.text; font-size: 12px; vertical-alignment: center; }
+            Icon { source: Weather.icon(d.weather); tint: Weather.tint(d.weather); width: 16px; height: 16px; y: 3px; }
+            track := Rectangle {
+                Rectangle { y: 10px; height: 1px; background: Theme.border; }
+                Rectangle {
+                    x: parent.width * d.start;
+                    width: max(64px, parent.width * (d.end - d.start));
+                    y: 2px;
+                    height: 18px;
+                    border-radius: 6px;
+                    background: d.high-color;
+                    HorizontalLayout {
+                        padding-left: 6px;
+                        padding-right: 6px;
+                        Text { text: d.low; color: #ffffff; font-size: 11px; font-weight: 600; vertical-alignment: center; }
+                        Rectangle { horizontal-stretch: 1; }
+                        Text { text: d.high; color: #ffffff; font-size: 11px; font-weight: 700; vertical-alignment: center; }
+                    }
+                }
+            }
+            Text { width: 52px; text: d.rain; color: Theme.primary; font-size: 11px; horizontal-alignment: right; vertical-alignment: center; }
+        }
+        TipArea {
+            tip: d.tip;
+            mouse-cursor: pointer;
+            clicked => {
+                Tips.show = false;
+                ForecastState.jump(d.slot);
+            }
         }
     }
 }
 
 export component ForecastPage inherits ScrollView {
-    in property <[HourData]> hours;
-    in property <[DayData]> days;
-    in property <string> hours-path;
+    property <bool> date-open;
     VerticalLayout {
         padding: 14px;
         spacing: 10px;
         alignment: start;
-        Card {
-            HorizontalLayout {
-                spacing: 14px;
-                Text { text: "Next 24 hours"; color: Theme.text-muted; font-size: 12px; font-weight: 600; horizontal-stretch: 1; vertical-alignment: center; }
-                LegendItem { swatch: Theme.accent; line: true; text: "Temperature"; }
-                LegendItem { swatch: Theme.primary; text: "Rain in mm"; }
-                Text { text: "% = chance of rain"; color: Theme.text-muted; font-size: 11px; vertical-alignment: center; }
+        if ForecastState.days.length == 0: Text { text: "Fetching the forecast…"; color: Theme.text-muted; }
+        HorizontalLayout {
+            spacing: 12px;
+            Text { text: ForecastState.sentence; color: Theme.text; font-size: 14px; font-weight: 600; wrap: word-wrap; horizontal-stretch: 1; vertical-alignment: center; }
+            Rectangle {
+                width: stamp.preferred-width;
+                stamp := Text { text: ForecastState.stamp; color: Theme.text-muted; font-size: 11px; vertical-alignment: center; }
+                TipArea { tip: ForecastState.stamp-tip; }
             }
-            HoursChart { hours: root.hours; path: root.hours-path; }
+        }
+        if ForecastState.facts.length > 0: HorizontalLayout {
+            spacing: 6px;
+            for f in ForecastState.facts: Rectangle {
+                height: 42px;
+                border-radius: 6px;
+                border-width: 1px;
+                border-color: Theme.border;
+                background: fact.has-hover ? Theme.surface-hover : Theme.surface;
+                VerticalLayout {
+                    padding-left: 10px;
+                    padding-right: 10px;
+                    alignment: center;
+                    Text { text: f.title; color: Theme.text-muted; font-size: 11px; }
+                    Text { text: f.value; color: Theme.text; font-size: 13px; font-weight: 600; overflow: elide; }
+                }
+                fact := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { ForecastState.jump(f.slot); }
+                }
+            }
         }
         Card {
-            title: "Next seven days";
-            // Column heads.
             HorizontalLayout {
-                spacing: 8px;
-                Text { text: "Day"; color: Theme.text-muted; font-size: 11px; width: 80px; }
-                Text { text: "Weather"; color: Theme.text-muted; font-size: 11px; width: 136px; }
-                Text { text: "Low"; color: Theme.text-muted; font-size: 11px; width: 44px; horizontal-alignment: right; }
-                Text { text: "Temperature range of each day, on the scale of the whole week"; color: Theme.text-muted; font-size: 11px; horizontal-stretch: 1; horizontal-alignment: center; overflow: elide; }
-                Text { text: "High"; color: Theme.text-muted; font-size: 11px; width: 44px; }
-                Text { text: "Rain"; color: Theme.text-muted; font-size: 11px; width: 60px; horizontal-alignment: right; }
+                spacing: 4px;
+                alignment: start;
+                IconButton { icon: Icons.chevron-left; tip: "Back by what is on screen"; clicked => { ForecastState.page(-1); } }
+                for s[i] in ForecastState.spans: Chip { text: s.name; checked: s.on; clicked => { ForecastState.pick-span(s.hours); } }
+                IconButton { icon: Icons.chevron-right; tip: "Ahead by what is on screen"; clicked => { ForecastState.page(1); } }
+                Chip { text: "Now"; tip: "Back to the present"; clicked => { ForecastState.to-now(); } }
+                IconButton { icon: Icons.calendar; tip: "Go to a day"; checked: root.date-open; clicked => { root.date-open = !root.date-open; } }
             }
-            for d in root.days: Rectangle {
-                height: 34px;
-                border-radius: 4px;
-                background: row.has-hover ? Theme.surface-hover : transparent;
-                HorizontalLayout {
-                    spacing: 8px;
-                    Text { text: d.label; color: Theme.text; width: 80px; vertical-alignment: center; }
+            if root.date-open: Rectangle {
+                height: picker.preferred-height;
+                picker := VerticalLayout {
                     HorizontalLayout {
-                        width: 136px;
-                        spacing: 7px;
-                        Icon { source: Weather.icon(d.weather); tint: Weather.tint(d.weather); width: 20px; height: 20px; y: 7px; }
-                        Text { text: d.condition; color: Theme.text-muted; font-size: 12px; vertical-alignment: center; overflow: elide; }
-                    }
-                    Text { text: d.low; color: Theme.text-muted; width: 44px; horizontal-alignment: right; vertical-alignment: center; }
-                    Rectangle {
-                        horizontal-stretch: 1;
-                        Rectangle { y: 15px; height: 4px; border-radius: 2px; background: Theme.surface-selected; }
-                        Rectangle {
-                            x: parent.width * d.start;
-                            y: 14px;
-                            width: parent.width * (d.end - d.start);
-                            height: 6px;
-                            border-radius: 3px;
-                            background: d.color;
+                        spacing: 3px;
+                        alignment: start;
+                        for d in ForecastState.days: Rectangle {
+                            width: 38px;
+                            height: 38px;
+                            border-radius: 4px;
+                            border-width: 1px;
+                            border-color: d.today ? Theme.primary : Theme.border;
+                            background: pick.has-hover ? Theme.surface-hover : Theme.surface;
+                            Text { text: d.label; color: Theme.text; font-size: 9px; wrap: word-wrap; horizontal-alignment: center; vertical-alignment: center; }
+                            pick := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    root.date-open = false;
+                                    ForecastState.jump(d.slot);
+                                }
+                            }
                         }
                     }
-                    Text { text: d.high; color: Theme.text; width: 44px; vertical-alignment: center; }
-                    Text { text: d.rain; color: Theme.primary; width: 60px; font-size: 12px; horizontal-alignment: right; vertical-alignment: center; }
                 }
-                row := TipArea { tip: d.tip; }
             }
+            // All of the band, and what of it is on screen.
+            overview := Rectangle {
+                height: 24px;
+                border-radius: 4px;
+                background: Theme.surface-variant;
+                clip: true;
+                Path {
+                    width: 100%;
+                    height: 100%;
+                    viewbox-x: 0;
+                    viewbox-y: 0;
+                    viewbox-width: overview.width / 1px;
+                    viewbox-height: 24;
+                    commands: ForecastState.overview;
+                    stroke: Theme.accent;
+                    stroke-width: 1px;
+                }
+                Rectangle {
+                    x: parent.width * ForecastState.window-start;
+                    width: parent.width * (ForecastState.window-end - ForecastState.window-start);
+                    background: Theme.primary.with-alpha(0.18);
+                    border-width: 1px;
+                    border-color: Theme.primary;
+                    border-radius: 4px;
+                }
+                Rectangle { x: parent.width * ForecastState.now-share; width: 1px; background: Theme.error; }
+                TouchArea {
+                    mouse-cursor: pointer;
+                    pointer-event(e) => {
+                        if e.kind == PointerEventKind.down { ForecastState.seek(self.mouse-x / self.width); }
+                    }
+                    moved => { if self.pressed { ForecastState.seek(self.mouse-x / self.width); } }
+                }
+            }
+            for row in ForecastState.filters: HorizontalLayout {
+                spacing: 4px;
+                alignment: start;
+                for c in row.items: Filter { chip: c; clicked => { ForecastState.toggle(c.index); } }
+            }
+            band := Rectangle {
+                height: ForecastState.band-height;
+                changed width => { ForecastState.resized(self.width); }
+                init => { ForecastState.resized(self.width); }
+                Rectangle {
+                    clip: true;
+                    for s in ForecastState.shapes: Path {
+                        width: band.width;
+                        height: band.height;
+                        viewbox-x: 0;
+                        viewbox-y: 0;
+                        viewbox-width: band.width / 1px;
+                        viewbox-height: band.height / 1px;
+                        commands: s.commands;
+                        stroke: s.stroke;
+                        stroke-width: s.width * 1px;
+                        fill: s.fill;
+                    }
+                    for l in ForecastState.labels: Text {
+                        x: l.right ? l.x - self.preferred-width : l.x;
+                        y: l.y;
+                        text: l.text;
+                        color: l.plain ? Theme.text-muted : l.color;
+                        font-size: 10px;
+                        font-weight: l.bold ? 700 : 400;
+                    }
+                    if ForecastState.now-x >= 0: Rectangle { x: ForecastState.now-x; width: 1.5px; y: 14px; background: Theme.error; }
+                    if ForecastState.hover-x >= 0: Rectangle { x: ForecastState.hover-x; width: 1px; y: 14px; background: Theme.text-muted; }
+                }
+                property <length> last-x;
+                touch := TouchArea {
+                    mouse-cursor: self.pressed ? MouseCursor.grabbing : MouseCursor.grab;
+                    pointer-event(e) => {
+                        if e.kind == PointerEventKind.down { band.last-x = self.mouse-x; }
+                        if e.kind == PointerEventKind.up { ForecastState.pan-done(); }
+                    }
+                    moved => {
+                        if self.pressed {
+                            ForecastState.pan(self.mouse-x - band.last-x);
+                            band.last-x = self.mouse-x;
+                        }
+                    }
+                    changed mouse-x => { if !self.pressed { ForecastState.hover(self.mouse-x); } }
+                    changed has-hover => { if !self.has-hover { ForecastState.hover-end(); } }
+                    scroll-event(e) => {
+                        if e.delta-y != 0 { ForecastState.zoom(e.delta-y > 0 ? 1 : -1, self.mouse-x); }
+                        if e.delta-x != 0 { ForecastState.pan(e.delta-x); ForecastState.pan-done(); }
+                        accept
+                    }
+                }
+                if ForecastState.hover-x >= 0 && !touch.pressed: Rectangle {
+                    x: ForecastState.hover-x + self.width + 22px > band.width ? ForecastState.hover-x - self.width - 12px : ForecastState.hover-x + 12px;
+                    y: 26px;
+                    width: tip-box.preferred-width;
+                    height: tip-box.preferred-height;
+                    background: Theme.surface;
+                    border-width: 1px;
+                    border-color: Theme.surface-selected;
+                    border-radius: 6px;
+                    tip-box := VerticalLayout {
+                        padding: 7px;
+                        spacing: 1px;
+                        Text { text: ForecastState.tip-title; color: Theme.text; font-size: 12px; font-weight: 700; }
+                        for line in ForecastState.tip-lines: Text { text: line; color: Theme.text-muted; font-size: 11px; }
+                    }
+                }
+            }
+        }
+        if ForecastState.days.length > 0: Card {
+            HorizontalLayout {
+                spacing: 4px;
+                Text { text: "Days"; color: Theme.text-muted; font-size: 12px; font-weight: 600; vertical-alignment: center; horizontal-stretch: 1; }
+                for v[i] in [
+                    { icon: Icons.layout-cards, tip: "Tiles with the course of the day" },
+                    { icon: Icons.layout-grid, tip: "Tiles with numbers only" },
+                    { icon: Icons.chart-bar, tip: "Columns: compare the days at a glance" },
+                    { icon: Icons.layout-list, tip: "Bars from low to high" },
+                ]: IconButton {
+                    icon: v.icon;
+                    tip: v.tip;
+                    checked: ForecastState.day-view == i;
+                    clicked => {
+                        ForecastState.day-view = i;
+                        ForecastState.view-chosen(i);
+                    }
+                }
+            }
+            if ForecastState.day-view <= 1: DayRow {
+                height: ForecastState.day-view == 0 ? 186px : 150px;
+                cell: max(128px, self.width / 7);
+                for d[i] in ForecastState.days: Tile {
+                    x: i * parent.cell + 2px;
+                    width: parent.cell - 4px;
+                    height: parent.height;
+                    day: d;
+                    curve: ForecastState.day-view == 0;
+                    clicked => { ForecastState.jump(d.slot); }
+                }
+            }
+            if ForecastState.day-view == 2: Columns {
+                height: 180px;
+                cell: max(64px, self.width / 14);
+            }
+            if ForecastState.day-view == 3: Bars { }
         }
     }
 }

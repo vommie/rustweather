@@ -69,6 +69,8 @@ pub struct App {
     pub radar_shown: Cell<(bool, bool, bool)>,
     pub layer_extents: RefCell<[Option<rustweather_core::map::Extent>; 3]>,
     pub heat_extent: Cell<Option<rustweather_core::map::Extent>>,
+    pub band: RefCell<crate::timeline_ui::Band>,
+    pub band_timer: slint::Timer,
     pub warning_outline: RefCell<Option<Outline>>,
     pub hover_outline: RefCell<Option<Outline>>,
     /// Only the newest question about the area under the pointer counts.
@@ -98,7 +100,8 @@ pub fn with_app(f: impl FnOnce(&Rc<App>) + Send + 'static) {
     });
 }
 
-/// The settings' place among the main window's pages.
+/// The places of some of the main window's pages.
+pub const FORECAST: i32 = 1;
 pub const SETTINGS: i32 = 4;
 
 /// A minimized window is not on screen, even though it is open.
@@ -182,6 +185,13 @@ impl App {
         };
         self.presence
             .send_if_modified(|old| std::mem::replace(old, presence) != presence);
+        let forecast_open =
+            presence == Presence::Active && on_screen(self.main.window()) && self.main.get_page() == FORECAST;
+        if let Some(control) = self.control.borrow().as_ref() {
+            control
+                .forecast_open
+                .send_if_modified(|old| std::mem::replace(old, forecast_open) != forecast_open);
+        }
         if self.quiet.replace(quiet) != quiet {
             self.radar.send(Command::Away(quiet));
         }
@@ -219,13 +229,9 @@ impl App {
         let now = models::now(&snapshot, &settings);
         self.main.set_now(now.clone());
         self.flyout.set_now(now);
-        let next_hours = models::hours(&snapshot, 24, 1);
-        self.main.set_hours_path(models::hours_path(&next_hours).into());
-        self.main.set_hours(ModelRc::new(VecModel::from(next_hours)));
+        crate::timeline_ui::refresh(self);
         self.flyout
             .set_hours(ModelRc::new(VecModel::from(models::hours(&snapshot, 6, 1))));
-        self.main
-            .set_days(ModelRc::new(VecModel::from(models::days(&snapshot, &settings))));
         self.main
             .set_alerts(ModelRc::new(VecModel::from(models::alerts(&snapshot))));
         let bars = models::bars(&snapshot);
@@ -535,6 +541,7 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     let start = weather::load_cached(&paths.cache).unwrap_or_default();
     let bg = cli.bg_color.as_deref().and_then(Rgb::parse);
     let fg = cli.fg_color.as_deref().and_then(Rgb::parse);
+    let (ui_start_span, ui_start_filters) = (ui.forecast_span, ui.forecast_filters.clone());
     let app = Rc::new(App {
         main,
         flyout,
@@ -573,6 +580,8 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         radar_shown: Cell::new((false, false, false)),
         layer_extents: RefCell::new([None; 3]),
         heat_extent: Cell::new(None),
+        band: crate::timeline_ui::Band::from_saved(ui_start_span, &ui_start_filters),
+        band_timer: slint::Timer::default(),
         warning_outline: RefCell::new(None),
         hover_outline: RefCell::new(None),
         hover_turn: Cell::new(0),
@@ -591,6 +600,7 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     radar_ui::wire(&app);
     settings_ui::wire(&app);
     crate::traffic_ui::wire(&app);
+    crate::timeline_ui::wire(&app);
     crate::hover::start(&app);
     crate::window_state::wire(&app);
     app.main.set_page(app.ui.borrow().page);

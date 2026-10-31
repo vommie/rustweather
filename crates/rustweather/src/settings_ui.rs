@@ -15,6 +15,7 @@ use crate::desktop::State;
 use crate::{DesktopRow, HealthRow, PlaceRow, SettingsData, Theme};
 
 const REFRESH: [u32; 5] = [5, 10, 15, 30, 60];
+const FORECAST: [u32; 5] = [30, 60, 120, 180, 360];
 const LOG_LEVELS: [&str; 4] = ["error", "warn", "info", "debug"];
 const CACHE_MB: [u32; 5] = [100, 300, 500, 1000, 2000];
 const RADAR_HOURS: [u32; 4] = [6, 24, 72, 168];
@@ -45,6 +46,7 @@ fn data(app: &App, s: &Settings) -> SettingsData {
             ThemeMode::Light => 2,
         },
         refresh: index_of(&REFRESH, &s.general.refresh_minutes, 1),
+        forecast: index_of(&FORECAST, &s.general.forecast_minutes, 2),
         autostart: app.desktop.autostart_enabled(),
         log_level: index_of(&LOG_LEVELS, &s.general.log_level.as_str(), 2),
         station_url: s.general.station_url.as_str().into(),
@@ -255,6 +257,7 @@ fn set_int(s: &mut Settings, key: &str, value: i32) {
             )
         }
         "refresh" => s.general.refresh_minutes = pick(&REFRESH, value, 10),
+        "forecast" => s.general.forecast_minutes = pick(&FORECAST, value, 120),
         "log-level" => s.general.log_level = pick(&LOG_LEVELS, value, "info").to_owned(),
         "source" => {
             s.radar.source = pick(

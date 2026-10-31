@@ -22,20 +22,34 @@ pub struct Current {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Hour {
     pub time: Option<DateTime<Local>>,
     pub temperature: f32,
+    pub feels: f32,
     pub precipitation: f32,
-    pub probability: f32,
+    /// `None` where the service gives no chance: far ahead.
+    pub probability: Option<f32>,
+    pub snow: f32,
+    pub wind: f32,
+    pub gust: f32,
+    pub humidity: f32,
+    pub cloud: f32,
+    pub pressure: f32,
+    pub uv: f32,
     pub code: u8,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Day {
     pub date: Option<NaiveDate>,
     pub min: f32,
     pub max: f32,
     pub precipitation: f32,
+    pub probability: Option<f32>,
+    pub gust: f32,
+    pub sunshine_hours: f32,
     pub code: u8,
     pub sunrise: Option<DateTime<Local>>,
     pub sunset: Option<DateTime<Local>>,
@@ -46,7 +60,7 @@ pub struct Forecast {
     pub feels_like: Option<f32>,
     pub uv: Option<f32>,
     pub code: u8,
-    /// Includes the past 24 hours, for the history curve.
+    /// Includes the past two days, for the history curve.
     pub hours: Vec<Hour>,
     pub days: Vec<Day>,
     pub air_quality: Option<f32>,

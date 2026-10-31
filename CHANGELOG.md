@@ -5,6 +5,21 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- The Forecast page is new: one band of time from a week ago to 16 days ahead, measured on the left and forecast on the right. Drag it,
+  zoom it with the wheel, page through it, jump to a day or back to now. Lanes for temperature, rain, wind and more, each with its numbers,
+  and every value can be shown or hidden. The pointer shows all values of an hour.
+- Days as tiles with the course of the day, as plain tiles, as columns or as bars, whichever you like, sliding sideways when the window is
+  narrow. A click on a day takes the band there.
+- A sentence and a few facts on top: next rain, warmest and coldest day, next frost. Warnings, dry spells, nights, the usual range of the
+  season, how sure the forecast is and what had been announced for past hours all lie on the band.
+- A setting for how often the forecast is fetched, two hours by default, and the page shows the time of the data.
+
+### Changed
+
+- Nothing the app keeps stays longer than a week: map and radar pictures, measured data and logs.
+
 ## [0.1.6] - 2026-10-30
 
 ### Changed

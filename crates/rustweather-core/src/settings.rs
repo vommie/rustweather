@@ -71,6 +71,8 @@ impl Settings {
 pub struct General {
     /// Minutes between weather fetches.
     pub refresh_minutes: u32,
+    /// How often the long forecast is fetched while the app is in use. Models do not change much faster.
+    pub forecast_minutes: u32,
     pub theme: ThemeMode,
     pub log_level: String,
     /// A wetterdienst.de station page, the fallback source of the weather.
@@ -81,6 +83,7 @@ impl Default for General {
     fn default() -> Self {
         Self {
             refresh_minutes: 10,
+            forecast_minutes: 120,
             theme: ThemeMode::System,
             log_level: "info".into(),
             station_url: "https://www.wetterdienst.de/Deutschlandwetter/Berlin/Aktuell/103840".into(),

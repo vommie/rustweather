@@ -4,15 +4,15 @@ import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
 import { Card, Icon, IconButton, StatusLine, Tile, TipLayer, Toast } from "controls.slint";
-import { MapChoice, AlertData, CityLabel, DayData, FrameCell, HourData, LayerRect, NowData, RainBar, TempLabel, ViewChip } from "types.slint";
+import { MapChoice, AlertData, CityLabel, FrameCell, HourData, LayerRect, NowData, RainBar, TempLabel, ViewChip } from "types.slint";
 import { NowPage } from "now_page.slint";
-import { ForecastPage } from "forecast_page.slint";
+import { DayCard, FactCard, FilterChip, FilterRow, ForecastPage, ForecastState, SpanChip, TimelineLabel, TimelineShape } from "forecast_page.slint";
 import { RadarPage } from "radar_page.slint";
 import { DesktopRow, HealthRow, PlaceRow, SettingsData, SettingsPage, SettingsState, TrafficEntry, TrafficHost } from "settings.slint";
 import { FlyoutWindow } from "flyout.slint";
 import { MiniWindow } from "mini.slint";
 
-export { Theme, MapChoice, SettingsState, SettingsData, PlaceRow, DesktopRow, HealthRow, TrafficEntry, TrafficHost, FlyoutWindow, MiniWindow, NowData, HourData, DayData, AlertData, FrameCell, CityLabel, LayerRect, RainBar, TempLabel, ViewChip }
+export { Theme, MapChoice, ForecastState, DayCard, FactCard, FilterChip, FilterRow, SpanChip, TimelineLabel, TimelineShape, SettingsState, SettingsData, PlaceRow, DesktopRow, HealthRow, TrafficEntry, TrafficHost, FlyoutWindow, MiniWindow, NowData, HourData, AlertData, FrameCell, CityLabel, LayerRect, RainBar, TempLabel, ViewChip }
 
 component RailButton inherits Rectangle {
     in property <image> icon;
@@ -75,9 +75,6 @@ export component MainWindow inherits Window {
 
     in-out property <int> page;
     in property <NowData> now;
-    in property <[HourData]> hours;
-    in property <[DayData]> days;
-    in property <string> hours-path;
     in property <[AlertData]> alerts;
     in property <string> status;
     in property <int> status-level;
@@ -197,13 +194,7 @@ export component MainWindow inherits Window {
                     horizontal-alignment: center;
                     vertical-alignment: center;
                 }
-                if root.page == 1 && root.days.length > 0: ForecastPage { hours: root.hours; days: root.days; hours-path: root.hours-path; }
-                if root.page == 1 && root.days.length == 0: Text {
-                    text: root.status == "" ? "Fetching the forecast…" : root.status;
-                    color: Theme.text-muted;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                }
+                if root.page == 1: ForecastPage { }
                 radar-scope := RadarPage {
                     visible: root.page == 2;
                     base: root.base;

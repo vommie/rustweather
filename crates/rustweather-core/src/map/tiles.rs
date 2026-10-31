@@ -23,6 +23,8 @@ pub struct Tile {
 }
 
 const RAM_BYTES: u64 = 400 * 1024 * 1024;
+/// Nothing in the cache stays longer than this.
+const WEEK: Duration = Duration::from_secs(7 * 24 * 3600);
 const MAP_SERVER_TRIES: usize = 4;
 const MAP_SERVER_TIMEOUT: Duration = Duration::from_secs(90);
 
@@ -416,7 +418,7 @@ fn walk(dir: &Path, out: &mut Vec<(std::time::SystemTime, u64, PathBuf)>) {
     }
 }
 
-/// Removes old radar files, then the oldest of everything while the cache is over its limit.
+/// Removes all that is over a week old, old radar files sooner, then the oldest of everything while the cache is over its limit.
 pub fn prune(cache_dir: &Path, max_bytes: u64, radar_age: Duration) {
     let mut files = Vec::new();
     walk(cache_dir, &mut files);
@@ -426,7 +428,8 @@ pub fn prune(cache_dir: &Path, max_bytes: u64, radar_age: Duration) {
     for (modified, size, path) in files {
         let text = path.to_string_lossy();
         let is_radar = text.contains("radar") || text.contains("layer-");
-        let expired = is_radar && now.duration_since(modified).is_ok_and(|age| age > radar_age);
+        let limit = if is_radar { radar_age.min(WEEK) } else { WEEK };
+        let expired = now.duration_since(modified).is_ok_and(|age| age > limit);
         if (expired || total > max_bytes) && std::fs::remove_file(&path).is_ok() {
             total = total.saturating_sub(size);
         }
