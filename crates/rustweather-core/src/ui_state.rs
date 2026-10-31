@@ -19,6 +19,11 @@ pub struct UiState {
     pub layer_lightning: bool,
     pub layer_temps: bool,
     pub layer_heat: bool,
+    /// Hours of the Forecast page's band on screen.
+    pub forecast_span: f64,
+    /// The filters that are on; empty means the first start.
+    pub forecast_filters: Vec<String>,
+    pub forecast_day_view: i32,
     pub legacy_import_done: bool,
     /// Where the tray icon was clicked last: the tray protocol tells it only then.
     pub tray_position: Option<(i32, i32)>,
@@ -54,6 +59,9 @@ impl Default for UiState {
             layer_lightning: false,
             layer_temps: false,
             layer_heat: false,
+            forecast_span: 96.0,
+            forecast_filters: Vec::new(),
+            forecast_day_view: 0,
             legacy_import_done: false,
             tray_position: None,
         }

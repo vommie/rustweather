@@ -3,12 +3,21 @@
 use chrono::{DateTime, Local, Utc};
 
 use crate::model::{Alert, Current, Forecast, RainOutlook, rain_word};
-use crate::settings::{TempUnit, Tray, Units};
+use crate::settings::{TempUnit, Tray, Units, WindUnit};
 
 pub fn temperature(celsius: f32, unit: TempUnit) -> String {
     match unit {
         TempUnit::Celsius => format!("{celsius:.0} °C"),
         TempUnit::Fahrenheit => format!("{:.0} °F", celsius * 9.0 / 5.0 + 32.0),
+    }
+}
+
+/// A wind speed in the chosen unit.
+pub fn wind(kmh: f32, unit: WindUnit) -> String {
+    match unit {
+        WindUnit::Kmh => format!("{kmh:.0} km/h"),
+        WindUnit::Ms => format!("{:.1} m/s", kmh / 3.6),
+        WindUnit::Beaufort => format!("{:.0} Bft", ((kmh / 3.6) / 0.836).powf(2.0 / 3.0).min(12.0)),
     }
 }
 

@@ -481,8 +481,11 @@ pub fn wire(app: &std::rc::Rc<App>) {
             });
         }};
     }
-    on!(on_page_changed, |app, _page| {
+    on!(on_page_changed, |app, page| {
         app.update_radar_activity();
+        if page == 1 {
+            crate::timeline_ui::refresh(&app);
+        }
         app.save_ui();
     });
     on!(on_open_settings, |app| {

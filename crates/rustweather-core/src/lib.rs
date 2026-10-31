@@ -13,6 +13,7 @@ pub mod secrets;
 pub mod settings;
 pub mod sources;
 pub mod store;
+pub mod timeline;
 pub mod tooltip;
 pub mod traffic;
 pub mod tray_icon;
