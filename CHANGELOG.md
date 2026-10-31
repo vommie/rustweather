@@ -5,6 +5,18 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Horizontal lines on the Forecast page at round values, with a stronger one at 0 °C. A filter hides them.
+
+### Changed
+
+- Day tiles use their space: no empty room at the bottom, and the course of the day runs over the whole width.
+
+### Fixed
+
+- A day tile no longer shows a rain symbol next to "dry".
+
 ## [0.1.7] - 2026-10-31
 
 ### Added

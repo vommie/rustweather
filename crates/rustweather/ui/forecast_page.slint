@@ -38,6 +38,8 @@ export global ForecastState {
     in property <[DayCard]> days;
     in property <int> today-index;
     in-out property <int> day-view;
+    in property <float> curve-width: 100;
+    in property <bool> details-row;
     callback resized(length);
     callback pan(length);
     callback pan-done();
@@ -92,38 +94,47 @@ component Tile inherits Rectangle {
     background: area.has-hover ? Theme.surface-hover : Theme.surface;
     opacity: root.day.past ? 0.75 : 1;
     VerticalLayout {
-        padding: 8px;
-        spacing: 3px;
+        padding: 6px;
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 2px;
         alignment: start;
-        Text { text: root.day.label; color: root.day.today ? Theme.primary : Theme.text; font-size: 12px; font-weight: 600; horizontal-alignment: center; }
         HorizontalLayout {
-            alignment: center;
-            spacing: 10px;
-            Icon { source: Weather.icon(root.day.weather); tint: Weather.tint(root.day.weather); width: 26px; height: 26px; y: 3px; }
-            VerticalLayout {
-                Text { text: root.day.high; color: root.day.high-color; font-size: 18px; font-weight: 700; }
-                Text { text: root.day.low; color: Theme.text-muted; font-size: 12px; }
-            }
+            spacing: 6px;
+            Text { text: root.day.label; color: root.day.today ? Theme.primary : Theme.text; font-size: 12px; font-weight: 600; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+            Icon { source: Weather.icon(root.day.weather); tint: Weather.tint(root.day.weather); width: 22px; height: 22px; }
+        }
+        HorizontalLayout {
+            spacing: 6px;
+            Text { text: root.day.high; color: root.day.high-color; font-size: 18px; font-weight: 700; vertical-alignment: center; }
+            Text { text: root.day.low; color: Theme.text-muted; font-size: 12px; vertical-alignment: center; horizontal-stretch: 1; horizontal-alignment: right; }
         }
         if root.curve: Rectangle {
-            height: 28px;
+            height: 26px;
             Path {
-                x: (parent.width - self.width) / 2;
-                width: 100px;
-                height: 30px;
+                width: 100%;
+                height: 100%;
                 viewbox-x: 0;
                 viewbox-y: 0;
-                viewbox-width: 100;
-                viewbox-height: 30;
+                viewbox-width: ForecastState.curve-width;
+                viewbox-height: 26;
                 commands: root.day.curve;
                 stroke: Theme.accent;
                 stroke-width: 1.6px;
             }
         }
-        if root.day.rain != "": Text { text: root.day.rain; color: Theme.primary; font-size: 11px; horizontal-alignment: center; }
-        if root.day.chance != "": Text { text: root.day.chance; color: Theme.text-muted; font-size: 11px; horizontal-alignment: center; }
-        if root.day.gust != "": Text { text: root.day.gust; color: Theme.text-muted; font-size: 11px; horizontal-alignment: center; }
-        if root.day.sun != "": Text { text: root.day.sun; color: Theme.text-muted; font-size: 11px; horizontal-alignment: center; }
+        HorizontalLayout {
+            height: 15px;
+            spacing: 6px;
+            Text { text: root.day.rain; color: Theme.primary; font-size: 11px; vertical-alignment: center; }
+            Text { text: root.day.chance; color: Theme.text-muted; font-size: 11px; horizontal-stretch: 1; horizontal-alignment: right; vertical-alignment: center; overflow: elide; }
+        }
+        if ForecastState.details-row: HorizontalLayout {
+            height: 15px;
+            spacing: 6px;
+            Text { text: root.day.gust; color: Theme.text-muted; font-size: 11px; vertical-alignment: center; overflow: elide; }
+            Text { text: root.day.sun; color: Theme.text-muted; font-size: 11px; horizontal-stretch: 1; horizontal-alignment: right; vertical-alignment: center; }
+        }
     }
     area := TipArea {
         tip: root.day.tip;
@@ -428,7 +439,7 @@ export component ForecastPage inherits ScrollView {
                 }
             }
             if ForecastState.day-view <= 1: DayRow {
-                height: ForecastState.day-view == 0 ? 186px : 150px;
+                height: 78px + (ForecastState.day-view == 0 ? 28px : 0) + (ForecastState.details-row ? 17px : 0);
                 cell: max(128px, self.width / 7);
                 for d[i] in ForecastState.days: Tile {
                     x: i * parent.cell + 2px;
