@@ -297,7 +297,7 @@ export component RadarPage inherits Rectangle {
             alignment: start;
             Chip { tip: "Map: " + root.maps[root.map-current].name; icon: Icons.map; has-icon: true; checked: root.map-open; clicked => { root.map-open = !root.map-open; } }
             Chip { tip: "Warnings: official DWD warnings by district, the stronger the darker. Click an area for the full text"; icon: Icons.alert-triangle; has-icon: true; checked: root.layer-alerts; clicked => { root.toggle-layer(0); } }
-            Chip { tip: root.clouds-label + ": satellite picture of the clouds, a new one comes every three hours"; icon: Icons.cloud; has-icon: true; checked: root.layer-clouds; clicked => { root.toggle-layer(1); } }
+            Chip { tip: root.clouds-label + ": where clouds are, low ones too and also at night, from EUMETSAT satellites every 15 minutes"; icon: Icons.cloud; has-icon: true; checked: root.layer-clouds; clicked => { root.toggle-layer(1); } }
             Chip { tip: "Lightning: strikes of the last hours, from the DWD"; icon: Icons.bolt; has-icon: true; checked: root.layer-lightning; clicked => { root.toggle-layer(2); } }
             Chip { tip: "Wind: the lines flow with the current wind, the scale is at the bottom right"; icon: Icons.wind; has-icon: true; checked: root.layer-wind; clicked => { root.toggle-layer(3); } }
             Chip { tip: "Temperature: current values of the cities, the closer you zoom in the more of them"; icon: Icons.temperature; has-icon: true; checked: root.layer-temps; clicked => { root.toggle-layer(4); } }

@@ -50,6 +50,7 @@ pub async fn frames(http: &Http) -> Result<Vec<Frame>> {
                 time,
                 layer: Layer {
                     post: Post::None,
+                    extra: Vec::new(),
                     id,
                     url,
                     // Counted as 1024: one level coarser than the 512 px pictures would allow. Half the sharpness, a quarter of the requests,

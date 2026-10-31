@@ -5,6 +5,12 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Clouds are complete now, at every zoom, by day and by night. Low clouds were thrown away because in the satellite picture they look like the
+  ground. The layer now uses EUMETSAT's cloud mask for where clouds are and the infrared picture for their structure, every 15 minutes, and the
+  world ring of all weather satellites beyond the view of Meteosat.
+
 ## [0.1.8] - 2026-10-31
 
 ### Added

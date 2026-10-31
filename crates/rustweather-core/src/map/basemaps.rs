@@ -11,6 +11,7 @@ const PLACES: &str = "Reference/World_Boundaries_and_Places";
 fn layer(id: String, url: String, max_zoom: i32) -> Layer {
     Layer {
         post: Post::None,
+        extra: Vec::new(),
         id,
         url,
         tile_size: 256,
