@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use image::RgbaImage;
 use parking_lot::Mutex;
 use quick_cache::Weighter;
 use quick_cache::sync::Cache;
@@ -15,6 +16,7 @@ use tokio::sync::Semaphore;
 use super::{Extent, View};
 use crate::error::Result;
 use crate::http::Http;
+use crate::radar::clouds;
 use crate::store;
 
 pub struct Tile {
@@ -31,10 +33,12 @@ const MAP_SERVER_TIMEOUT: Duration = Duration::from_secs(90);
 /// One tile layer. `url` has `{z}`, `{x}` and `{y}`; `id` names its cache folder and must not contain a key.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Layer {
-    /// What happens to a picture after decoding.
+    /// How the picture comes about.
     pub post: Post,
     pub id: String,
     pub url: String,
+    /// Further pictures that go into one tile.
+    pub extra: Vec<String>,
     pub tile_size: u32,
     pub max_zoom: i32,
 }
@@ -44,12 +48,16 @@ pub struct Layer {
 pub enum Post {
     #[default]
     None,
-    /// A satellite picture: only the clouds stay.
+    /// Several satellite pictures make one tile (`clouds::stack`), which is what the cache then holds.
     Clouds,
 }
 
 impl Layer {
     fn url_of(&self, z: i32, x: i64, y: i64) -> String {
+        self.fill(&self.url, z, x, y)
+    }
+
+    fn fill(&self, template: &str, z: i32, x: i64, y: i64) -> String {
         let n = f64::from(1u32 << z.clamp(0, 30));
         let bbox = Extent {
             x0: x as f64 / n,
@@ -57,7 +65,7 @@ impl Layer {
             x1: (x + 1) as f64 / n,
             y1: (y + 1) as f64 / n,
         };
-        self.url
+        template
             .replace("{z}", &z.to_string())
             .replace("{x}", &x.to_string())
             .replace("{y}", &y.to_string())
@@ -69,6 +77,10 @@ impl Layer {
         let shift = f64::from(self.tile_size / 256).log2();
         ((zoom - shift).round() as i32).clamp(0, self.max_zoom)
     }
+}
+
+fn is_map_server(url: &str) -> bool {
+    url.contains("/wms?") || url.contains("/ows?")
 }
 
 fn key(layer: &str, z: i32, x: i64, y: i64) -> String {
@@ -128,13 +140,10 @@ pub struct Store {
     radar_budget: Budget,
 }
 
-fn decode(bytes: &[u8], post: Post) -> Option<Tile> {
+fn decode(bytes: &[u8]) -> Option<Tile> {
     let image = image::load_from_memory(bytes).ok()?.into_rgba8();
     let size = image.width();
-    let mut rgba = image.into_raw();
-    if post == Post::Clouds {
-        crate::radar::clouds::keep_clouds(&mut rgba);
-    }
+    let rgba = image.into_raw();
     Some(Tile { size, rgba })
 }
 
@@ -176,7 +185,7 @@ impl Store {
         if let Some(tile) = self.ram.get(&k) {
             return Some(tile);
         }
-        let tile = Arc::new(decode(&std::fs::read(self.path(&k)).ok()?, layer.post)?);
+        let tile = Arc::new(decode(&std::fs::read(self.path(&k)).ok()?)?);
         self.ram.insert(k, Arc::clone(&tile));
         Some(tile)
     }
@@ -197,6 +206,17 @@ impl Store {
         }
         let url = layer.url_of(z, x, y);
         let limited = layer.id.starts_with("radar-");
+        let extra: Vec<String> = match layer.post {
+            Post::None => Vec::new(),
+            Post::Clouds => layer
+                .extra
+                .iter()
+                .enumerate()
+                // The second source is the ring around the world, only needed at the edge of the satellite's view.
+                .filter(|(i, _)| *i == 0 || clouds::beyond_disk(z, x))
+                .map(|(_, template)| layer.fill(template, z, x, y))
+                .collect(),
+        };
         let post = layer.post;
         let round = self.radar_round.load(Ordering::Relaxed);
         let store = Arc::clone(self);
@@ -210,7 +230,7 @@ impl Store {
                 store.busy.lock().remove(&k);
                 return;
             }
-            let gate = if url.contains("/wms?") {
+            let gate = if is_map_server(&url) {
                 &store.map_server_gate
             } else {
                 &store.gate
@@ -218,7 +238,10 @@ impl Store {
             let Ok(_permit) = gate.acquire().await else {
                 return;
             };
-            let result = store.fetch(&k, &url, post).await;
+            let result = match post {
+                Post::None => store.fetch(&k, &url).await,
+                Post::Clouds => store.fetch_clouds(&k, &url, &extra, z).await,
+            };
             store.busy.lock().remove(&k);
             if result.is_err() {
                 store
@@ -231,27 +254,56 @@ impl Store {
         true
     }
 
-    async fn fetch(&self, key: &str, url: &str, post: Post) -> Result<()> {
-        tracing::debug!(key, "[Tiles] Fetching");
-        // A map server answers "not here" as text with HTTP 200, and now and then for something it has.
-        let wms = url.contains("/wms?");
-        for _ in 0..if wms { MAP_SERVER_TRIES } else { 1 } {
-            let bytes = if wms {
-                self.http.bytes_within(url, MAP_SERVER_TIMEOUT).await?
-            } else {
-                self.http.bytes(url).await?
-            };
-            if let Some(tile) = decode(&bytes, post) {
-                let path = self.path(key);
-                if let Some(parent) = path.parent() {
-                    let _ = std::fs::create_dir_all(parent);
-                }
-                store::write_atomic(&path, &bytes)?;
-                self.ram.insert(key.to_owned(), Arc::new(tile));
-                return Ok(());
+    /// One picture of a map server, which answers "not here" as text with HTTP 200, and now and then for something it has.
+    async fn picture(&self, url: &str) -> Result<RgbaImage> {
+        for _ in 0..MAP_SERVER_TRIES {
+            let bytes = self.http.bytes_within(url, MAP_SERVER_TIMEOUT).await?;
+            if let Ok(picture) = image::load_from_memory(&bytes) {
+                return Ok(picture.into_rgba8());
             }
         }
         Err(crate::error::Error::format("Map tiles", "not a picture"))
+    }
+
+    async fn fetch_clouds(&self, key: &str, mask: &str, others: &[String], z: i32) -> Result<()> {
+        let (infrared, ring) = (others.first(), others.get(1));
+        let (mask, infrared, ring) = tokio::join!(self.picture(mask), self.optional(infrared), self.optional(ring));
+        let picture = clouds::stack(&mask?, infrared.as_ref(), ring.as_ref(), z);
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        picture
+            .write_to(&mut bytes, image::ImageFormat::Png)
+            .map_err(|e| crate::error::Error::format("Map tiles", e))?;
+        self.keep(key, &bytes.into_inner())
+    }
+
+    /// Clouds without their structure beat no clouds.
+    async fn optional(&self, url: Option<&String>) -> Option<RgbaImage> {
+        self.picture(url?).await.ok()
+    }
+
+    fn keep(&self, key: &str, bytes: &[u8]) -> Result<()> {
+        let tile = decode(bytes).ok_or_else(|| crate::error::Error::format("Map tiles", "not a picture"))?;
+        let path = self.path(key);
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        store::write_atomic(&path, bytes)?;
+        self.ram.insert(key.to_owned(), Arc::new(tile));
+        Ok(())
+    }
+
+    async fn fetch(&self, key: &str, url: &str) -> Result<()> {
+        tracing::debug!(key, "[Tiles] Fetching");
+        if is_map_server(url) {
+            let picture = self.picture(url).await?;
+            let mut bytes = std::io::Cursor::new(Vec::new());
+            picture
+                .write_to(&mut bytes, image::ImageFormat::Png)
+                .map_err(|e| crate::error::Error::format("Map tiles", e))?;
+            return self.keep(key, &bytes.into_inner());
+        }
+        let bytes = self.http.bytes(url).await?;
+        self.keep(key, &bytes)
     }
 
     /// Gives up radar tiles still waiting for their turn, so an old view does not use up the service's limit.

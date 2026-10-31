@@ -33,7 +33,8 @@ impl Kind {
 
     fn name(self) -> &'static str {
         match self {
-            Self::Clouds => "clouds",
+            // Not "clouds": tiles of the old picture may still lie in caches.
+            Self::Clouds => "cloud-stack",
             Self::Warnings => "warnings",
             Self::Lightning => "lightning",
         }
@@ -41,7 +42,7 @@ impl Kind {
 
     fn server_layer(self) -> &'static str {
         match self {
-            Self::Clouds => clouds::LAYER,
+            Self::Clouds => "",
             Self::Warnings => "dwd:Warnungen_Landkreise",
             Self::Lightning => "dwd:Accumulated_Flash_Geometry",
         }
@@ -69,19 +70,22 @@ pub fn bucket(kind: Kind, now: DateTime<Utc>) -> DateTime<Utc> {
 }
 
 pub fn layer(kind: Kind, time: DateTime<Utc>) -> Layer {
-    let extra = if kind == Kind::Clouds {
-        format!("&time={}", clouds::stamp(time))
+    let (post, url, extra) = if kind == Kind::Clouds {
+        let (mask, others) = clouds::sources(time);
+        (Post::Clouds, mask, others)
     } else {
-        "&transparent=true".to_owned()
+        let url = format!(
+            "https://maps.dwd.de/geoserver/dwd/wms?service=WMS&version=1.3.0&request=GetMap&layers={}&styles=&crs=EPSG:3857\
+             &bbox={{bbox}}&width=512&height=512&format=image/png&transparent=true",
+            kind.server_layer()
+        );
+        (Post::None, url, Vec::new())
     };
     Layer {
-        post: if kind == Kind::Clouds { Post::Clouds } else { Post::None },
+        post,
         id: format!("layer-{}/{}", kind.name(), time.format("%Y%m%dT%H%M")),
-        url: format!(
-            "https://maps.dwd.de/geoserver/dwd/wms?service=WMS&version=1.3.0&request=GetMap&layers={}&styles=&crs=EPSG:3857\
-             &bbox={{bbox}}&width=512&height=512&format=image/png{extra}",
-            kind.server_layer()
-        ),
+        url,
+        extra,
         tile_size: 512,
         max_zoom: kind.max_level(),
     }
