@@ -60,12 +60,13 @@ pub enum Filter {
     Spread,
     Typical,
     Night,
+    Grid,
     Dry,
     Warnings,
 }
 
 impl Filter {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 18] = [
         Self::Temperature,
         Self::Feels,
         Self::Rain,
@@ -81,6 +82,7 @@ impl Filter {
         Self::Spread,
         Self::Typical,
         Self::Night,
+        Self::Grid,
         Self::Dry,
         Self::Warnings,
     ];
@@ -102,6 +104,7 @@ impl Filter {
             Self::Spread => "spread",
             Self::Typical => "typical",
             Self::Night => "night",
+            Self::Grid => "grid",
             Self::Dry => "dry",
             Self::Warnings => "warnings",
         }
@@ -124,6 +127,7 @@ impl Filter {
             Self::Spread => "Uncertainty",
             Self::Typical => "Usual range",
             Self::Night => "Night",
+            Self::Grid => "Grid",
             Self::Dry => "Dry spells",
             Self::Warnings => "Warnings",
         }
@@ -146,6 +150,7 @@ impl Filter {
             Self::Spread => "Where the temperature will likely be: the wider the area, the less certain",
             Self::Typical => "How warm it usually gets here at this time of the year",
             Self::Night => "Dark bands from sunset to sunrise",
+            Self::Grid => "Horizontal lines at round values, a stronger one at 0 °C where frost begins",
             Self::Dry => "Green bars: at least three hours in a row stay dry",
             Self::Warnings => "Official warnings over the time they hold for",
         }
@@ -158,6 +163,15 @@ impl Filter {
     /// What is on the first time the page opens.
     pub fn starts_on(self) -> bool {
         !matches!(self, Self::Cloud | Self::Uv | Self::Pressure | Self::Announced)
+    }
+
+    /// Its color in the legend. Background shades need something to be seen by there.
+    pub fn swatch(self, dark: bool) -> Rgb {
+        match (self, dark) {
+            (Self::Night | Self::Grid, true) => Rgb(0xa6, 0xad, 0xc8),
+            (Self::Night | Self::Grid, false) => Rgb(0x6c, 0x6f, 0x85),
+            _ => self.color(dark),
+        }
     }
 
     /// Its color on the theme's background.
@@ -173,7 +187,7 @@ impl Filter {
             Self::Humidity => (0x89dceb, 0x04a5e5),
             Self::Cloud => (0x9399b2, 0x7c7f93),
             Self::Pressure => (0xf5c2e7, 0xea76cb),
-            Self::Night => (0x585b70, 0xbcc0cc),
+            Self::Night | Self::Grid => (0x585b70, 0xbcc0cc),
         };
         let value: u32 = if dark { on_dark } else { on_light };
         Rgb((value >> 16) as u8, (value >> 8) as u8, value as u8)

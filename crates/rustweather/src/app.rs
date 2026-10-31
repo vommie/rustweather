@@ -542,6 +542,7 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     let bg = cli.bg_color.as_deref().and_then(Rgb::parse);
     let fg = cli.fg_color.as_deref().and_then(Rgb::parse);
     let (ui_start_span, ui_start_filters) = (ui.forecast_span, ui.forecast_filters.clone());
+    let ui_grid_known = ui.forecast_grid_known;
     let app = Rc::new(App {
         main,
         flyout,
@@ -580,7 +581,7 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         radar_shown: Cell::new((false, false, false)),
         layer_extents: RefCell::new([None; 3]),
         heat_extent: Cell::new(None),
-        band: crate::timeline_ui::Band::from_saved(ui_start_span, &ui_start_filters),
+        band: crate::timeline_ui::Band::from_saved(ui_start_span, &ui_start_filters, ui_grid_known),
         band_timer: slint::Timer::default(),
         warning_outline: RefCell::new(None),
         hover_outline: RefCell::new(None),

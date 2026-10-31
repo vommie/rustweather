@@ -24,6 +24,8 @@ pub struct UiState {
     /// The filters that are on; empty means the first start.
     pub forecast_filters: Vec<String>,
     pub forecast_day_view: i32,
+    /// The saved filters already know the grid; older ones get it switched on.
+    pub forecast_grid_known: bool,
     pub legacy_import_done: bool,
     /// Where the tray icon was clicked last: the tray protocol tells it only then.
     pub tray_position: Option<(i32, i32)>,
@@ -62,6 +64,7 @@ impl Default for UiState {
             forecast_span: 96.0,
             forecast_filters: Vec::new(),
             forecast_day_view: 0,
+            forecast_grid_known: false,
             legacy_import_done: false,
             tray_position: None,
         }

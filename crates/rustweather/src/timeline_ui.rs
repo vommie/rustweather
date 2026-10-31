@@ -26,6 +26,12 @@ const NOW_AT: f64 = 0.25;
 /// Width of a filter button, roughly, to break them into rows.
 const CHAR_WIDTH: f32 = 6.2;
 const CHIP_EXTRA: f32 = 36.0;
+const MIN_TILE: f32 = 128.0;
+const GUST_SHOWN: f32 = 30.0;
+const SUN_SHOWN: f32 = 0.5;
+/// What a tile keeps around its curve.
+const TILE_MARGIN: f32 = 16.0;
+const CURVE_HEIGHT: f32 = 26.0;
 
 /// What the page has on screen. Lives in the app, survives page changes.
 #[derive(Default)]
@@ -41,12 +47,15 @@ pub struct Band {
 }
 
 impl Band {
-    pub fn from_saved(span: f64, on: &[String]) -> RefCell<Self> {
-        let chosen: HashSet<Filter> = if on.is_empty() {
+    pub fn from_saved(span: f64, on: &[String], grid_known: bool) -> RefCell<Self> {
+        let mut chosen: HashSet<Filter> = if on.is_empty() {
             Filter::ALL.into_iter().filter(|f| f.starts_on()).collect()
         } else {
             on.iter().filter_map(|k| Filter::from_key(k)).collect()
         };
+        if !grid_known {
+            chosen.insert(Filter::Grid);
+        }
         RefCell::new(Self {
             span: span.max(MIN_SPAN),
             on: chosen,
@@ -170,7 +179,7 @@ fn filter_rows(band: &Band, dark: bool) -> Vec<FilterRow> {
         row.push(FilterChip {
             name: filter.name().into(),
             tip: filter.tip().into(),
-            color: color(filter.color(dark)),
+            color: color(filter.swatch(dark)),
             on: band.on.contains(&filter),
             index: index as i32,
         });
@@ -190,12 +199,13 @@ fn show_filters(app: &App) {
         .set_filters(ModelRc::new(VecModel::from(rows)));
 }
 
-fn curve(values: &[f32]) -> String {
+/// The course of a day over the tile's full width.
+fn curve(values: &[f32], width: f32) -> String {
     let (low, high) = values
         .iter()
         .fold((f32::MAX, f32::MIN), |m, v| (m.0.min(*v), m.1.max(*v)));
     let span = (high - low).max(1.0);
-    let step = 100.0 / (values.len().max(2) - 1) as f32;
+    let step = width / (values.len().max(2) - 1) as f32;
     values
         .iter()
         .enumerate()
@@ -204,13 +214,13 @@ fn curve(values: &[f32]) -> String {
                 "{}{:.1} {:.1}",
                 if i == 0 { "M" } else { "L" },
                 i as f32 * step,
-                27.0 - (v - low) / span * 24.0
+                CURVE_HEIGHT - 2.0 - (v - low) / span * (CURVE_HEIGHT - 4.0)
             )
         })
         .collect()
 }
 
-fn day_card(day: &DaySummary, low: f32, high: f32, units: &Units) -> DayCard {
+fn day_card(day: &DaySummary, low: f32, high: f32, units: &Units, curve_width: f32) -> DayCard {
     let temperature = |v: f32| tooltip::temperature(v, units.temperature);
     let span = (high - low).max(1.0);
     let label = if day.today {
@@ -229,13 +239,20 @@ fn day_card(day: &DaySummary, low: f32, high: f32, units: &Units) -> DayCard {
         .map_or(String::new(), |c| format!("{c:.0} % chance"));
     let gust = day
         .gust
-        .filter(|g| *g >= 30.0)
+        .filter(|g| *g >= GUST_SHOWN)
         .map_or(String::new(), |g| format!("Gusts {}", tooltip::wind(g, units.wind)));
     let sun = day
         .sunshine
-        .filter(|s| *s >= 0.5)
+        .filter(|s| *s >= SUN_SHOWN)
         .map_or(String::new(), |s| format!("{s:.0} h sun"));
-    let code = day.code.unwrap_or(if day.rain >= 0.1 { 61 } else { 3 });
+    let wet = (51..=67).contains(&day.code.unwrap_or(0)) || (80..=99).contains(&day.code.unwrap_or(0));
+    // The code of a day can speak of showers that hardly reach the ground: the symbol follows the amount beside it.
+    let code = match day.code {
+        Some(_) if wet && day.rain < 0.1 => 3,
+        Some(code) => code,
+        None if day.rain >= 0.1 => 61,
+        None => 3,
+    };
     let tip = [
         format!(
             "{}: {} to {}",
@@ -258,7 +275,7 @@ fn day_card(day: &DaySummary, low: f32, high: f32, units: &Units) -> DayCard {
         high: temperature(day.high).into(),
         low: temperature(day.low).into(),
         high_color: color(timeline::tint(day.high)),
-        curve: curve(&day.curve).into(),
+        curve: curve(&day.curve, curve_width).into(),
         rain: rain.into(),
         chance: chance.into(),
         gust: gust.into(),
@@ -346,7 +363,18 @@ fn show_summary(app: &App, band: &Band) {
         .days
         .iter()
         .fold((f32::MAX, f32::MIN), |m, d| (m.0.min(d.low), m.1.max(d.high)));
-    let cards: Vec<DayCard> = band.days.iter().map(|d| day_card(d, low, high, units)).collect();
+    let curve_width = (band.width / 7.0).max(MIN_TILE) - TILE_MARGIN;
+    let cards: Vec<DayCard> = band
+        .days
+        .iter()
+        .map(|d| day_card(d, low, high, units, curve_width))
+        .collect();
+    state.set_curve_width(curve_width);
+    state.set_details_row(
+        band.days
+            .iter()
+            .any(|d| d.gust.is_some_and(|g| g >= GUST_SHOWN) || d.sunshine.is_some_and(|s| s >= SUN_SHOWN)),
+    );
     state.set_today_index(band.days.iter().position(|d| d.today).unwrap_or(0) as i32);
     state.set_days(ModelRc::new(VecModel::from(cards)));
     state.set_overview(timeline::overview(&band.slots, band.width.max(1.0), OVERVIEW_HEIGHT).into());
@@ -364,7 +392,8 @@ pub fn refresh(app: &App) {
         let snapshot = app.snapshot.borrow();
         let mut band = app.band.borrow_mut();
         let now = Utc::now();
-        let first_data = band.slots.is_empty();
+        // Measured hours can arrive before the forecast, and the band has no now until that is there.
+        let first_data = band.slots.iter().all(|s| s.measured || s.temperature.is_none());
         band.slots = timeline::slots(snapshot.forecast.as_ref(), &snapshot.archive, now);
         band.days = timeline::days(&band.slots, snapshot.forecast.as_ref(), Local::now().date_naive());
         band.typical = snapshot.archive.typical;
@@ -405,6 +434,7 @@ fn remember(app: &App) {
         let band = app.band.borrow();
         let mut ui = app.ui.borrow_mut();
         ui.forecast_span = band.span;
+        ui.forecast_grid_known = true;
         ui.forecast_filters = Filter::ALL
             .into_iter()
             .filter(|f| band.on.contains(f))

@@ -7,13 +7,17 @@ use chrono::{DateTime, Datelike as _, Local, Timelike as _, Utc};
 use super::{CERTAIN_HOURS, Filter, Slot, dry_spells, slot_of};
 use crate::archive::Typical;
 use crate::color::Rgb;
-use crate::settings::Units;
+use crate::settings::{TempUnit, Units};
 use crate::tooltip;
 
 const AXIS: f32 = 22.0;
 const LANE_GAP: f32 = 8.0;
 const MIN_LABEL_GAP: f32 = 46.0;
 const DAY_NAME_WIDTH: f32 = 50.0;
+const GRID_STEPS: [f32; 5] = [1.0, 2.0, 5.0, 10.0, 20.0];
+const MOST_GRID_LINES: f32 = 6.0;
+/// Beside the numbers at the lane's top and bottom, which share its right edge.
+const MIDDLE_LABEL_AT: f32 = 56.0;
 
 /// The stretch of hours on screen; `start` and `span` count slots.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -333,6 +337,9 @@ impl Painter<'_> {
         }
         let (low, high) = (low - 1.0, high + 1.0);
         let y = |v: f32| lane.top + lane.height - (v - low) / (high - low) * lane.height;
+        if self.on(Filter::Grid) {
+            self.temperature_grid(low, high, &y);
+        }
         if let Some(t) = self.input.typical.filter(|_| typical) {
             let shape = rect(0.0, y(t.high), self.input.width, y(t.low) - y(t.high));
             self.out
@@ -394,6 +401,44 @@ impl Painter<'_> {
         if self.on(Filter::Temperature) {
             self.temperature_line(lane, low, high);
         }
+    }
+
+    fn temperature_grid(&mut self, low: f32, high: f32, y: &dyn Fn(f32) -> f32) {
+        let unit = self.input.units.temperature;
+        let width = self.input.width;
+        let color = Filter::Grid.color(self.input.dark);
+        let mut lines = String::new();
+        for value in round_values(shown(low, unit), shown(high, unit)) {
+            let celsius = from_shown(value, unit);
+            lines += &format!("M0 {:.1}H{width}", y(celsius));
+            self.text(width - 4.0, y(celsius) - 13.0, format!("{value:.0}°"), RIGHT);
+        }
+        self.out.shapes.push(Shape {
+            commands: lines,
+            stroke: Some((color, 0.45)),
+            fill: None,
+            width: 1.0,
+        });
+        if low < 0.0 && high > 0.0 {
+            self.out
+                .shapes
+                .push(line_shape(format!("M0 {:.1}H{width}", y(0.0)), color, 1.6));
+        }
+    }
+
+    /// A line through the middle of a lane, with its value.
+    fn middle(&mut self, lane: &Lane, text: String) {
+        if !self.on(Filter::Grid) {
+            return;
+        }
+        let (y, width) = (lane.top + lane.height / 2.0, self.input.width);
+        self.out.shapes.push(Shape {
+            commands: format!("M0 {y:.1}H{width}"),
+            stroke: Some((Filter::Grid.color(self.input.dark), 0.45)),
+            fill: None,
+            width: 1.0,
+        });
+        self.text(width - MIDDLE_LABEL_AT, y - 13.0, text, RIGHT);
     }
 
     fn temperature_line(&mut self, lane: &Lane, low: f32, high: f32) {
@@ -473,6 +518,7 @@ impl Painter<'_> {
         let bar = (step - 0.5).max(0.8);
         let top = self.visible().map(|(_, s)| s.rain + s.snow).fold(1.0, f32::max);
         let bottom = lane.top + lane.height;
+        self.middle(lane, format!("{:.1}", top / 2.0));
         if self.on(Filter::Chance) {
             let mut commands = String::new();
             for (i, slot) in self.visible() {
@@ -522,6 +568,7 @@ impl Painter<'_> {
             .visible()
             .filter_map(|(_, s)| s.gust.or(s.wind))
             .fold(30.0, f32::max);
+        self.middle(lane, tooltip::wind(top / 2.0, self.input.units.wind));
         for (filter, value) in [
             (Filter::Gust, (|s: &Slot| s.gust) as fn(&Slot) -> Option<f32>),
             (Filter::Wind, (|s: &Slot| s.wind) as fn(&Slot) -> Option<f32>),
@@ -536,6 +583,7 @@ impl Painter<'_> {
     }
 
     fn percent(&mut self, lane: &Lane, filter: Filter, title: &str, value: fn(&Slot) -> Option<f32>) {
+        self.middle(lane, "50 %".into());
         self.series(lane, filter, 100.0, 0.0, value);
         self.title(lane, title);
         self.scale(lane, "100 %".into(), "0 %".into());
@@ -549,6 +597,7 @@ impl Painter<'_> {
         if low > high {
             return;
         }
+        self.middle(lane, format!("{:.0}", (high + low) / 2.0));
         self.series(lane, Filter::Pressure, high + 1.0, low - 1.0, |s| s.pressure);
         self.title(lane, "Pressure, hPa");
         self.scale(lane, format!("{:.0}", high + 1.0), format!("{:.0}", low - 1.0));
@@ -556,10 +605,37 @@ impl Painter<'_> {
 
     fn uv(&mut self, lane: &Lane) {
         let top = self.visible().filter_map(|(_, s)| s.uv).fold(4.0, f32::max);
+        self.middle(lane, format!("{:.0}", top / 2.0));
         self.series(lane, Filter::Uv, top, 0.0, |s| s.uv);
         self.title(lane, "UV");
         self.scale(lane, format!("{top:.0}"), "0".into());
     }
+}
+
+/// A temperature in the unit on screen.
+fn shown(celsius: f32, unit: TempUnit) -> f32 {
+    match unit {
+        TempUnit::Celsius => celsius,
+        TempUnit::Fahrenheit => celsius * 9.0 / 5.0 + 32.0,
+    }
+}
+
+fn from_shown(value: f32, unit: TempUnit) -> f32 {
+    match unit {
+        TempUnit::Celsius => value,
+        TempUnit::Fahrenheit => (value - 32.0) * 5.0 / 9.0,
+    }
+}
+
+/// Round values between two ends: few enough to stay calm, whatever the range.
+fn round_values(low: f32, high: f32) -> Vec<f32> {
+    let step = GRID_STEPS
+        .into_iter()
+        .find(|s| (high - low) / s <= MOST_GRID_LINES)
+        .unwrap_or(50.0);
+    let first = (low / step).ceil() as i32;
+    let last = (high / step).floor() as i32;
+    (first..=last).map(|k| k as f32 * step).collect()
 }
 
 pub fn draw(input: &Input<'_>) -> Drawing {
@@ -637,6 +713,19 @@ pub fn overview(slots: &[Slot], width: f32, height: f32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn round_values_stay_few_at_any_range() {
+        assert_eq!(round_values(2.3, 7.6), [3.0, 4.0, 5.0, 6.0, 7.0]);
+        assert_eq!(round_values(-3.0, 12.0), [0.0, 5.0, 10.0]);
+        assert!(round_values(-40.0, 45.0).len() <= 7);
+    }
+
+    #[test]
+    fn fahrenheit_lines_are_round_in_fahrenheit() {
+        assert_eq!(shown(100.0, TempUnit::Fahrenheit), 212.0);
+        assert_eq!(from_shown(212.0, TempUnit::Fahrenheit), 100.0);
+    }
 
     #[test]
     fn dashes_keep_the_line_going() {
