@@ -5,6 +5,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-10-31
+
 ### Fixed
 
 - Clouds are complete now, at every zoom, by day and by night. Low clouds were thrown away because in the satellite picture they look like the
@@ -173,7 +175,8 @@ First release, replacing the `weather_tray.py` script.
 - Arch package with `build-package.sh`.
 - The application menu entry offers Radar and Settings as actions; a second start opens what it asks for.
 
-[Unreleased]: https://github.com/vommie/rustweather/compare/v0.1.8...HEAD
+[Unreleased]: https://github.com/vommie/rustweather/compare/v0.1.9...HEAD
+[0.1.9]: https://github.com/vommie/rustweather/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/vommie/rustweather/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/vommie/rustweather/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/vommie/rustweather/compare/v0.1.5...v0.1.6
