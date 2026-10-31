@@ -5,6 +5,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-10-31
+
 ### Added
 
 - Horizontal lines on the Forecast page at round values, with a stronger one at 0 °C. A filter hides them.
@@ -165,7 +167,8 @@ First release, replacing the `weather_tray.py` script.
 - Arch package with `build-package.sh`.
 - The application menu entry offers Radar and Settings as actions; a second start opens what it asks for.
 
-[Unreleased]: https://github.com/vommie/rustweather/compare/v0.1.7...HEAD
+[Unreleased]: https://github.com/vommie/rustweather/compare/v0.1.8...HEAD
+[0.1.8]: https://github.com/vommie/rustweather/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/vommie/rustweather/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/vommie/rustweather/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/vommie/rustweather/compare/v0.1.4...v0.1.5
