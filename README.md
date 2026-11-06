@@ -16,6 +16,20 @@ script, for Linux with KDE Plasma.
 - **Maps:** satellite, topographic, OpenStreetMap and more, picked with a preview right on the radar. CARTO needs your key; the standard
   map needs neither key nor network.
 
+![A short tour from Germany to Europe and close to a rain band: rain radar, warnings, wind, clouds, lightning, temperatures and heat on topographic, satellite, terrain, relief and dark maps, then the forecast and the current weather](docs/screenshots/demo.webp)
+
+| | |
+| --- | --- |
+| ![The current weather: temperature, wind, humidity, pressure, UV, air quality, pollen, sun and moon, the last 24 hours](docs/screenshots/now.png) | ![The forecast: measured and forecast temperature with its usual range, rain, wind and humidity, with filters](docs/screenshots/forecast.png) |
+
+![The tray: the temperature as an icon, and the card a click opens: current weather, the next hours and a live radar](docs/screenshots/tray.png)
+
+## Quick start
+
+1. Install the package (see [Install](#install)) and start RustWeather from the application menu; the temperature appears in the tray.
+2. Click the tray icon for the window: current weather, forecast, radar and warnings.
+3. Set your place in Settings > Places; a new installation starts with Berlin.
+
 ## Build
 
 ```bash
@@ -51,12 +65,16 @@ rustweather --desktop install
 
 ## API keys
 
-CARTO maps need a key: Settings > Sources. It is stored in `~/.config/rustweather/secrets.toml`, readable only by you.
-Keys are never part of the program, of this repository or of the logs.
+CARTO maps need a key: Settings > Sources.
 
 ## Files
 
 Settings in `~/.config/rustweather`, cache in `~/.cache/rustweather`, logs in `~/.local/state/rustweather/logs`.
+
+## Limitations
+
+- Linux with KDE Plasma (Arch Linux, Manjaro); other desktops are not tested.
+- The radar and the warnings of the DWD cover Germany; outside, RainViewer and Open-Meteo stand in.
 
 ## Contributing
 
@@ -71,3 +89,5 @@ Please report security problems privately, as described in [SECURITY.md](SECURIT
 ## License
 
 MIT. Map borders: Natural Earth (public domain). Icons and tray digits: Tabler Icons (MIT). See `assets/README.md`.
+
+The maps in the screenshots: © OpenStreetMap contributors, SRTM, © [OpenTopoMap](https://opentopomap.org) (CC BY-SA 3.0), Esri and its data partners (satellite, terrain, relief, dark gray); the screenshots are therefore under CC BY-SA 3.0 as well. Radar, warnings and weather data in them: Deutscher Wetterdienst (through Bright Sky), Open-Meteo, EUMETSAT (clouds).
