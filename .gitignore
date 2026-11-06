@@ -10,3 +10,12 @@ packaging/src/
 # Never commit API keys or local app data.
 secrets.toml
 .env
+
+# Local agent and development files: they stay on the maintainer's machine, never in the public repository
+/CLAUDE.md
+/CLAUDE.local.md
+HANDOFF*.md
+HANDON*.md
+/.claude/
+/.mcp.json
+/scripts/rw-testenv

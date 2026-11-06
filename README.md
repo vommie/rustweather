@@ -1,5 +1,9 @@
 # RustWeather
 
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/vommie/rustweather)](https://github.com/vommie/rustweather/releases)
+![Platform: Arch Linux / Manjaro, KDE Plasma](https://img.shields.io/badge/platform-Arch%20%7C%20Manjaro%20%7C%20KDE%20Plasma-1793d1)
+
 The temperature in your tray and a weather radar that leaves nothing to wish for. A Rust + Slint rewrite of a PyQt tray
 script, for Linux with KDE Plasma.
 
@@ -53,6 +57,16 @@ Keys are never part of the program, of this repository or of the logs.
 ## Files
 
 Settings in `~/.config/rustweather`, cache in `~/.cache/rustweather`, logs in `~/.local/state/rustweather/logs`.
+
+## Contributing
+
+Bug reports and ideas are welcome as [issues](https://github.com/vommie/rustweather/issues) and in the
+[discussions](https://github.com/vommie/rustweather/discussions). The repository does not take pull requests.
+[AGENTS.md](AGENTS.md) holds the rules for contributors and coding agents.
+
+## Security
+
+Please report security problems privately, as described in [SECURITY.md](SECURITY.md).
 
 ## License
 
