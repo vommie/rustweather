@@ -5,6 +5,14 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-11-06
+
+### Changed
+
+- The place a new installation starts with is Berlin (city centre) with the Berlin-Tempelhof station. Places you chose
+  yourself stay as they are.
+- The repository is public now: contributor guide (AGENTS.md), security policy (SECURITY.md).
+
 ## [0.1.9] - 2026-10-31
 
 ### Fixed
@@ -175,7 +183,8 @@ First release, replacing the `weather_tray.py` script.
 - Arch package with `build-package.sh`.
 - The application menu entry offers Radar and Settings as actions; a second start opens what it asks for.
 
-[Unreleased]: https://github.com/vommie/rustweather/compare/v0.1.9...HEAD
+[Unreleased]: https://github.com/vommie/rustweather/compare/v0.1.10...HEAD
+[0.1.10]: https://github.com/vommie/rustweather/compare/v0.1.9...v0.1.10
 [0.1.9]: https://github.com/vommie/rustweather/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/vommie/rustweather/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/vommie/rustweather/compare/v0.1.6...v0.1.7
