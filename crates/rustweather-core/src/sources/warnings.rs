@@ -34,6 +34,27 @@ pub struct Outline {
 }
 
 impl Outline {
+    pub(crate) fn rings(&self) -> &[Vec<(f64, f64)>] {
+        &self.rings
+    }
+
+    pub(crate) fn from_rings(rings: Vec<Vec<(f64, f64)>>) -> Option<Self> {
+        Self::new(rings)
+    }
+
+    /// The shape as SVG commands in a drawing space with its corner at `(x0, y0)` and `unit` per step.
+    pub(crate) fn commands_in(&self, x0: f64, y0: f64, unit: f64) -> String {
+        let mut commands = String::new();
+        for ring in &self.rings {
+            for (index, (x, y)) in ring.iter().enumerate() {
+                let letter = if index == 0 { 'M' } else { 'L' };
+                commands += &format!("{letter}{:.0} {:.0}", (x - x0) / unit, (y - y0) / unit);
+            }
+            commands.push('Z');
+        }
+        commands
+    }
+
     fn new(rings: Vec<Vec<(f64, f64)>>) -> Option<Self> {
         let points = || rings.iter().flatten();
         let fold =
@@ -136,7 +157,7 @@ struct Properties {
     expires: Option<DateTime<Utc>>,
 }
 
-fn level(severity: &str) -> u8 {
+pub(crate) fn level(severity: &str) -> u8 {
     match severity.to_lowercase().as_str() {
         "extreme" => 4,
         "severe" => 3,

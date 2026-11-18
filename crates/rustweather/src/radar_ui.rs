@@ -122,6 +122,7 @@ pub fn on_event(app: &App, event: Event) {
                 maps.set_row_data(index, choice);
             }
         }
+        Event::Warnings(map) => *app.warning_map.borrow_mut() = map,
         Event::Cities(list) => {
             let scale = w.window().scale_factor();
             let cities: Vec<CityLabel> = list

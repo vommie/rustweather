@@ -4,14 +4,17 @@ pub mod cities;
 pub mod clouds;
 pub mod dwd;
 pub mod engine;
+pub mod flow;
 pub mod layers;
 pub mod model;
 pub mod motion;
 pub mod outlook;
 pub mod palette;
 pub mod rainviewer;
+pub mod rv_frames;
 pub mod temps;
 pub mod thumbs;
+pub mod warning_layer;
 pub mod wind;
 
 use chrono::{DateTime, Utc};

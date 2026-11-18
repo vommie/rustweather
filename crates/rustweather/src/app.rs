@@ -72,6 +72,8 @@ pub struct App {
     pub band: RefCell<crate::timeline_ui::Band>,
     pub band_timer: slint::Timer,
     pub warning_outline: RefCell<Option<Outline>>,
+    /// All warning shapes from the radar, for clicks and the pointer.
+    pub warning_map: RefCell<Option<std::sync::Arc<rustweather_core::sources::warning_areas::WarningMap>>>,
     pub hover_outline: RefCell<Option<Outline>>,
     /// Only the newest question about the area under the pointer counts.
     pub hover_turn: Cell<u64>,
@@ -584,6 +586,7 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         band: crate::timeline_ui::Band::from_saved(ui_start_span, &ui_start_filters, ui_grid_known),
         band_timer: slint::Timer::default(),
         warning_outline: RefCell::new(None),
+        warning_map: RefCell::new(None),
         hover_outline: RefCell::new(None),
         hover_turn: Cell::new(0),
         probe_at: Cell::new(None),
