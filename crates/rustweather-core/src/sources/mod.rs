@@ -3,6 +3,7 @@
 pub mod brightsky;
 pub mod geocode;
 pub mod openmeteo;
+pub mod warning_areas;
 pub mod warnings;
 pub mod wetterdienst;
 

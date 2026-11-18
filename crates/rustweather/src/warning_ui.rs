@@ -9,6 +9,23 @@ use slint::{ModelRc, VecModel};
 use crate::app::{App, with_app};
 use crate::{models, radar_ui};
 
+/// The warnings of a place from the shapes the radar holds, without asking a server; `None` before they came.
+fn local(app: &App, lon: f64, lat: f64) -> Option<warnings::Found> {
+    let (x, y) = to_unit(lon, lat);
+    app.warning_map.borrow().as_ref().map(|map| map.at(x, y))
+}
+
+fn show_found(app: &App, found: warnings::Found) {
+    if found.alerts.is_empty() {
+        close(app);
+        return;
+    }
+    app.main.set_warning_area(found.area.into());
+    app.main
+        .set_warning_panel(ModelRc::new(VecModel::from(models::alert_rows(&found.alerts))));
+    show_outline(app, found.outline);
+}
+
 fn show_outline(app: &App, outline: Option<Outline>) {
     let (commands, width, height) = outline.as_ref().map_or((String::new(), 0.0, 0.0), Outline::path);
     app.main.set_warning_path(commands.into());
@@ -38,17 +55,15 @@ pub fn show_at(app: &App, lat: f64, lon: f64) {
     if !app.ui.borrow().layer_alerts {
         return;
     }
+    if let Some(found) = local(app, lon, lat) {
+        show_found(app, found);
+        return;
+    }
     let http = app.http.clone();
     app.runtime.spawn(async move {
         let result = warnings::at(&http, lon, lat).await;
         with_app(move |app| match result {
-            Ok(found) if found.alerts.is_empty() => close(app),
-            Ok(found) => {
-                app.main.set_warning_area(found.area.into());
-                app.main
-                    .set_warning_panel(ModelRc::new(VecModel::from(models::alert_rows(&found.alerts))));
-                show_outline(app, found.outline);
-            }
+            Ok(found) => show_found(app, found),
             Err(e) => tracing::warn!(error = %e, "[Radar] Warnings for the clicked place failed"),
         });
     });
@@ -65,6 +80,10 @@ pub fn hover_at(app: &App, lat: f64, lon: f64) {
     app.hover_turn.set(turn);
     if inside(&app.warning_outline) || !in_germany(lon, lat) {
         show_hover(app, None);
+        return;
+    }
+    if let Some(found) = local(app, lon, lat) {
+        show_hover(app, found.outline);
         return;
     }
     let http = app.http.clone();

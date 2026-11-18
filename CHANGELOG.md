@@ -5,6 +5,20 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Warnings on the radar are drawn by the app itself from one request for all of Germany, every 10 minutes while the layer is on.
+  They show at every zoom with sharp district borders, and a click or the pointer finds its warning at once instead of after
+  several seconds.
+- RainViewer rain (outside of Germany) now travels smoothly between frames like the DWD radar does, instead of fading from one
+  frame into the next and seeming to jump back.
+- Zoomed in, DWD rain has round edges instead of the steps of its 1 km grid, and even drizzle no longer flickers pixel by pixel at its edge.
+- Clouds are softened by the size of the satellite's cells when zoomed in, so they no longer show as squares.
+
+### Fixed
+
+- A layer tile that failed (clouds, lightning) is asked for again after half a minute instead of staying empty until the map moved.
+
 ## [0.1.10] - 2026-11-06
 
 ### Changed

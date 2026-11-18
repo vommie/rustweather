@@ -165,6 +165,38 @@ pub fn sample(values: &[u16], x: f32, y: f32) -> f32 {
     top + (bottom - top) * ky
 }
 
+/// Like `sample`, with a cubic curve (Catmull-Rom) over 4 × 4 cells: zoomed in, where one cell covers several pixels, rain gets
+/// round edges instead of the steps of the grid. The curve meets every cell's value, so a single cell of drizzle stays; it dips
+/// below zero between dry cells, which counts as dry.
+#[inline]
+pub fn sample_smooth(values: &[u16], x: f32, y: f32) -> f32 {
+    if !(x >= 1.0 && y >= 1.0 && x < (WIDTH - 2) as f32 && y < (HEIGHT - 2) as f32) {
+        return sample(values, x, y);
+    }
+    let (x0, y0) = (x as usize - 1, y as usize - 1);
+    let weights = |t: f32| {
+        let (t2, t3) = (t * t, t * t * t);
+        [
+            (-t3 + 2.0 * t2 - t) / 2.0,
+            (3.0 * t3 - 5.0 * t2 + 2.0) / 2.0,
+            (-3.0 * t3 + 4.0 * t2 + t) / 2.0,
+            (t3 - t2) / 2.0,
+        ]
+    };
+    let (wx, wy) = (weights(x.fract()), weights(y.fract()));
+    let mut sum = 0.0;
+    for (j, wj) in wy.iter().enumerate() {
+        let row = (y0 + j) * WIDTH + x0;
+        let line = values.get(row..row + 4).unwrap_or(&[0; 4]);
+        sum += wj * line.iter().zip(&wx).map(|(v, w)| f32::from(*v) * w).sum::<f32>();
+    }
+    // The edge of drizzle lies halfway to the dry cell, so it gets round too; the grid's lowest step is 1, and a plain threshold at 1
+    // would follow the cells' squares and flicker pixel by pixel on an even stretch of 1, which lands a hair above or below by rounding.
+    if sum >= DRIZZLE_EDGE { sum.max(1.0) } else { 0.0 }
+}
+
+const DRIZZLE_EDGE: f32 = 0.5;
+
 /// mm/h of a grid value.
 pub fn rate(value: f32) -> f32 {
     value * 0.12
@@ -173,6 +205,36 @@ pub fn rate(value: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn smooth_sampling_keeps_rain_and_rounds_the_steps() {
+        let mut values = vec![0u16; WIDTH * HEIGHT];
+        for y in 0..20 {
+            for x in 0..20 {
+                values[(100 + y) * WIDTH + 100 + x] = 100;
+            }
+        }
+        assert!(
+            (sample_smooth(&values, 110.0, 110.0) - 100.0).abs() < 0.01,
+            "inside stays"
+        );
+        assert_eq!(sample_smooth(&values, 50.0, 50.0), 0.0, "far outside stays dry");
+        let edge = sample_smooth(&values, 99.5, 110.0);
+        assert!(edge > 0.0 && edge < 100.0, "the edge is soft: {edge}");
+        values[300 * WIDTH + 300] = 1;
+        assert!(
+            sample_smooth(&values, 300.0, 300.0) >= 1.0,
+            "a single cell of drizzle stays"
+        );
+        assert_eq!(sample_smooth(&values, 300.0, 301.0), 0.0, "and keeps to its place");
+    }
+
+    #[test]
+    fn an_even_stretch_of_drizzle_does_not_flicker() {
+        let values = vec![1u16; WIDTH * HEIGHT];
+        let all = (0..200).all(|i| sample_smooth(&values, 500.0 + i as f32 * 0.13, 500.0 + i as f32 * 0.07) >= 1.0);
+        assert!(all);
+    }
 
     #[test]
     fn projection_matches_the_grid() {

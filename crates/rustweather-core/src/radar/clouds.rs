@@ -127,9 +127,71 @@ pub async fn latest(http: &Http) -> Result<DateTime<Utc>> {
     Err(Error::format("EUMETSAT", "no cloud picture in the last hours"))
 }
 
+/// The cloud pictures come in cells of about ten kilometers here (measured on screen, 2026-11-18). Zoomed in, each would be a visible square; softening by about half a
+/// cell gives clouds their shape again. Alpha is premultiplied for it, so the dark clear sky does not bleed into the clouds.
+const CELL_METERS: f64 = 10_000.0;
+const EARTH: f64 = 40_075_016.7;
+
+pub fn soften(rgba: &mut [u8], view: &crate::map::View) {
+    let meters_per_pixel = EARTH * view.lat.to_radians().cos() / view.scale();
+    let sigma = (0.5 * CELL_METERS / meters_per_pixel) as f32;
+    if sigma < 0.7 {
+        return;
+    }
+    let Some(mut picture) = RgbaImage::from_raw(view.width, view.height, rgba.to_vec()) else {
+        return;
+    };
+    for pixel in picture.pixels_mut() {
+        let a = u16::from(pixel[3]);
+        for c in 0..3 {
+            pixel[c] = ((u16::from(pixel[c]) * a + 127) / 255) as u8;
+        }
+    }
+    let blurred = imageops::fast_blur(&picture, sigma.min(16.0));
+    for (out, pixel) in rgba.as_chunks_mut::<4>().0.iter_mut().zip(blurred.pixels()) {
+        let a = pixel[3];
+        if a == 0 {
+            *out = [0; 4];
+            continue;
+        }
+        for c in 0..3 {
+            out[c] = ((u16::from(pixel[c]) * 255 + u16::from(a) / 2) / u16::from(a)).min(255) as u8;
+        }
+        out[3] = a;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn view(zoom: f64) -> crate::map::View {
+        crate::map::View {
+            lon: 10.0,
+            lat: 50.0,
+            zoom,
+            width: 64,
+            height: 64,
+        }
+    }
+
+    #[test]
+    fn zoomed_in_a_square_gets_soft_edges_and_keeps_its_color() {
+        let mut rgba = vec![0u8; 64 * 64 * 4];
+        for y in 16..48 {
+            for x in 16..48 {
+                rgba[(y * 64 + x) * 4..][..4].copy_from_slice(&[230, 232, 236, 220]);
+            }
+        }
+        let before = rgba.clone();
+        soften(&mut rgba, &view(8.0));
+        let edge = (32 * 64 + 16) * 4;
+        assert!(rgba[edge + 3] < before[edge + 3], "the edge softens");
+        assert!(rgba[edge] > 200, "without turning dark: {}", rgba[edge]);
+        let mut far = before.clone();
+        soften(&mut far, &view(3.0));
+        assert_eq!(far, before, "zoomed out nothing changes");
+    }
 
     fn time(text: &str) -> DateTime<Utc> {
         DateTime::parse_from_rfc3339(text).unwrap().with_timezone(&Utc)

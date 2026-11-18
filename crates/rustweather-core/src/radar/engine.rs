@@ -16,15 +16,18 @@ use super::model::{self, Model};
 use super::motion::{self, Field};
 use super::palette::{self, Ramp};
 use super::rainviewer;
+use super::rv_frames::{self, RvFrames};
 use super::temps;
 use super::thumbs::Thumbs;
 use super::wind::{self, Field as WindField, Flow, Loaded as WindLoaded};
 use super::{FrameInfo, FrameState};
+use super::{flow, warning_layer};
 use crate::error::{Error, Result};
 use crate::http::Http;
 use crate::map::tiles::{self, Layer, Store};
 use crate::map::{Extent, View, in_germany, labels, vector};
 use crate::settings::{Basemap, RadarSource, RainPalette};
+use crate::sources::warning_areas::{self, WarningMap};
 
 const REFRESH: Duration = Duration::from_secs(5 * 60);
 const SLOW_AFTER: Duration = Duration::from_secs(6);
@@ -45,6 +48,15 @@ const WIND_MAX_AGE: Duration = Duration::from_secs(15 * 60);
 const WIND_RETRY: Duration = Duration::from_secs(60);
 const WIND_DWD_RETRY: Duration = Duration::from_secs(10 * 60);
 const METEO_PAUSE: Duration = Duration::from_secs(60 * 60);
+/// The warnings change a few times an hour; one answer holds all of Germany.
+const WARNINGS_REFRESH: Duration = Duration::from_secs(10 * 60);
+const WARNINGS_RETRY: Duration = Duration::from_secs(60);
+/// Warnings from the disk older than this are not shown: they may be over.
+const WARNINGS_MAX_AGE: Duration = Duration::from_secs(60 * 60);
+/// A layer tile that failed is asked for again after this, once the store lets it.
+/// From this zoom one cell of the DWD grid (1 km) covers more than two pixels, and is drawn smooth.
+const SMOOTH_FROM_ZOOM: f64 = 7.5;
+const TILE_RETRY: Duration = Duration::from_secs(32);
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
@@ -133,6 +145,8 @@ pub enum Event {
         picture: Picture,
     },
     Cities(Vec<(String, f32, f32)>),
+    /// All warning shapes, so a click finds its warning at once; `None` when the layer is off.
+    Warnings(Option<Arc<WarningMap>>),
     Timeline {
         frames: Vec<FrameInfo>,
         live: usize,
@@ -171,6 +185,10 @@ pub enum Command {
     LayerTile {
         kind: Kind,
     },
+    LayerTileFailed {
+        kind: Kind,
+    },
+    WarningsLoaded(Result<WarningMap>),
     CloudsTime(Result<DateTime<Utc>>),
     TempsLoaded(Result<Model>),
     KeyChecked(bool),
@@ -258,6 +276,11 @@ pub fn start(setup: Setup, events: impl Fn(Event) + Send + 'static) -> Result<Ha
         slow_said: false,
         rain_dirty: true,
         base_dirty: true,
+        rv_frames: RvFrames::default(),
+        warning_map: None,
+        warning_file: setup.cache_dir.join("warnings.json"),
+        warnings_busy: false,
+        warnings_due: None,
     };
     std::thread::Builder::new()
         .name("radar".into())
@@ -330,6 +353,11 @@ struct Worker {
     slow_said: bool,
     rain_dirty: bool,
     base_dirty: bool,
+    rv_frames: RvFrames,
+    warning_map: Option<Arc<WarningMap>>,
+    warning_file: PathBuf,
+    warnings_busy: bool,
+    warnings_due: Option<Instant>,
 }
 
 /// True when the key gets another picture than no key at all.
@@ -357,6 +385,8 @@ struct Slot {
     dirty: bool,
     drawn: Option<Instant>,
     checked: Option<Instant>,
+    /// A tile failed: the picture is put together again from this time on, which asks for it again.
+    retry: Option<Instant>,
 }
 
 impl Worker {
@@ -393,11 +423,19 @@ impl Worker {
             self.tick();
             if self.base_dirty {
                 self.base_dirty = false;
+                let started = Instant::now();
                 self.render_base();
+                tracing::trace!(ms = started.elapsed().as_millis(), "[Radar] Map drawn");
             }
             if self.rain_dirty {
                 self.rain_dirty = false;
+                let started = Instant::now();
                 self.render_rain();
+                tracing::trace!(
+                    ms = started.elapsed().as_millis(),
+                    position = self.position,
+                    "[Radar] Rain drawn"
+                );
             }
         }
     }
@@ -458,6 +496,9 @@ impl Worker {
                 for kind in KINDS {
                     if before[kind.index()] != self.layer_on(kind) {
                         self.slots[kind.index()] = Slot::default();
+                        if kind == Kind::Warnings && !self.layer_on(kind) {
+                            self.emit(Event::Warnings(None));
+                        }
                         if !self.layer_on(kind) {
                             self.emit(Event::Layer {
                                 kind,
@@ -528,12 +569,18 @@ impl Worker {
             Command::RvLoaded(result) => match result {
                 Ok(frames) => {
                     self.rv = frames;
+                    self.rv_frames.clear();
                     self.loaded();
                     self.preload_rv();
                 }
                 Err(e) => self.failed(&e),
             },
             Command::LayerTile { kind } => self.slots[kind.index()].dirty = true,
+            Command::LayerTileFailed { kind } => {
+                let slot = &mut self.slots[kind.index()];
+                slot.retry = slot.retry.or(Some(Instant::now() + TILE_RETRY));
+            }
+            Command::WarningsLoaded(result) => self.warnings_loaded(result),
             Command::TempsLoaded(result) => {
                 self.temps_busy = false;
                 match result {
@@ -775,7 +822,10 @@ impl Worker {
                 Ok(()) => {
                     let _ = tx.send(Command::LayerTile { kind });
                 }
-                Err(e) => tracing::debug!(error = %e, ?kind, "[Radar] A layer tile failed"),
+                Err(e) => {
+                    tracing::debug!(error = %e, ?kind, "[Radar] A layer tile failed");
+                    let _ = tx.send(Command::LayerTileFailed { kind });
+                }
             });
     }
 
@@ -821,6 +871,12 @@ impl Worker {
 
     /// Puts a layer's picture together from its tiles. What is not there yet is fetched, a coarser tile stands in meanwhile.
     fn render_layer(&mut self, kind: Kind) {
+        let started = Instant::now();
+        let _done = Defer(move || tracing::trace!(ms = started.elapsed().as_millis(), ?kind, "[Radar] Layer drawn"));
+        if kind == Kind::Warnings {
+            self.render_warnings();
+            return;
+        }
         let Some(layer) = self.slots[kind.index()].layer.clone() else {
             return;
         };
@@ -829,6 +885,9 @@ impl Worker {
         let mut rgba = vec![0u8; (big.width * big.height * 4) as usize];
         for (z, x, y) in tiles::compose(&big, &layer, &self.store, &mut rgba, 1.0) {
             self.request_layer(kind, &layer, z, x, y);
+        }
+        if kind == Kind::Clouds {
+            clouds::soften(&mut rgba, &big);
         }
         let extent = big.extent(0.0);
         let slot = &mut self.slots[kind.index()];
@@ -861,8 +920,16 @@ impl Worker {
             if !self.layer_on(kind) {
                 continue;
             }
-            self.follow_data(kind);
+            if kind == Kind::Warnings {
+                self.fetch_warnings();
+            } else {
+                self.follow_data(kind);
+            }
             let slot = &mut self.slots[kind.index()];
+            if slot.retry.is_some_and(|t| t <= Instant::now()) {
+                slot.retry = None;
+                slot.dirty = true;
+            }
             if !slot
                 .shown
                 .is_some_and(|(extent, zoom)| layers::covers(&extent, zoom, &view))
@@ -965,6 +1032,8 @@ impl Worker {
             self.wind = None;
             self.wind_at = None;
             self.temp_grid = None;
+            self.rv_frames.clear();
+            self.warning_map = None;
         }
     }
 
@@ -1291,6 +1360,11 @@ impl Worker {
         let b = self.grid.get(index + 1).map(|f| Arc::clone(&f.values));
         let index_table = rate_table();
         let (ramp, opacity) = (&self.ramp, self.config.opacity);
+        let pick: fn(&[u16], f32, f32) -> f32 = if view.zoom >= SMOOTH_FROM_ZOOM {
+            dwd::sample_smooth
+        } else {
+            dwd::sample
+        };
         let mut out = vec![0u8; size];
         out.par_chunks_mut(lut.width.max(1) * 4)
             .zip(lut.cells.par_chunks(lut.width.max(1)))
@@ -1300,11 +1374,11 @@ impl Worker {
                     let value = match (&warp, &b) {
                         (Some(field), Some(b)) => {
                             let (vx, vy) = field.at(x, y);
-                            let from = dwd::sample(&a, x - vx * k, y - vy * k);
-                            let to = dwd::sample(b, x + vx * (1.0 - k), y + vy * (1.0 - k));
+                            let from = pick(&a, x - vx * k, y - vy * k);
+                            let to = pick(b, x + vx * (1.0 - k), y + vy * (1.0 - k));
                             from + (to - from) * k
                         }
-                        _ => dwd::sample(&a, x, y),
+                        _ => pick(&a, x, y),
                     };
                     if let Some(i) = index_table.get((value * 4.0) as usize).copied().flatten() {
                         let c = ramp[usize::from(i)];
@@ -1321,9 +1395,8 @@ impl Worker {
     fn rain_rv(&mut self) -> Vec<u8> {
         let view = self.view;
         let size = (view.width * view.height * 4) as usize;
-        let mut out = vec![0u8; size];
         let Some(max) = self.rv.len().checked_sub(1) else {
-            return out;
+            return vec![0; size];
         };
         let position = if self.position.is_nan() {
             max as f32
@@ -1339,12 +1412,7 @@ impl Worker {
             .flatten()
             .find(|i| ready(*i))
             .unwrap_or(index);
-        let a = self.rv.get(shown).cloned();
-        let b = self
-            .rv
-            .get(shown + 1)
-            .filter(|_| shown == index && ready(index + 1))
-            .cloned();
+        let next = (shown == index && ready(index + 1)).then_some(index + 1);
         if shown != index
             && let Some(frame) = self.rv.get(index).cloned()
         {
@@ -1353,25 +1421,120 @@ impl Worker {
                 self.request(&frame.layer, z, x.rem_euclid(1 << z), y, false);
             }
         }
+        self.rv_frames.keep(&view, shown);
         let opacity = self.config.opacity;
-        let mut missing = Vec::new();
-        if let Some(frame) = &a {
-            let weight = if self.config.smooth && b.is_some() {
-                1.0 - k
-            } else {
-                1.0
-            };
-            for tile in tiles::compose(&view, &frame.layer, &self.store, &mut out, opacity * weight) {
-                missing.push((frame.layer.clone(), tile));
+        let Some(a) = self.rv_picture(shown) else {
+            return vec![0; size];
+        };
+        // Moving both frames toward each other lets a shower travel; fading them only made it stand in two places.
+        if self.config.smooth
+            && k > 0.01
+            && let Some(b) = next.and_then(|n| self.rv_picture(n))
+        {
+            let (width, height) = (view.width as usize, view.height as usize);
+            let motion = self.rv_frames.flow(shown, &a, &b, width, height);
+            return flow::blend(&a, &b, width, height, &motion, k, opacity);
+        }
+        rv_frames::faded(&a, opacity)
+    }
+
+    /// A whole frame of the view; complete ones are kept until the view changes.
+    fn rv_picture(&mut self, index: usize) -> Option<Arc<Vec<u8>>> {
+        if let Some(picture) = self.rv_frames.picture(index) {
+            return Some(picture);
+        }
+        let frame = self.rv.get(index)?.clone();
+        let view = self.view;
+        let mut rgba = vec![0u8; (view.width * view.height * 4) as usize];
+        let missing: Vec<_> = tiles::compose(&view, &frame.layer, &self.store, &mut rgba, 1.0)
+            .into_iter()
+            .collect();
+        let complete = missing.is_empty();
+        for (z, x, y) in missing {
+            self.request(&frame.layer, z, x, y, false);
+        }
+        let rgba = Arc::new(rgba);
+        if complete {
+            self.rv_frames.put(index, Arc::clone(&rgba));
+        }
+        Some(rgba)
+    }
+
+    /// The shapes from the disk first, then from the DWD every few minutes while the layer is on screen.
+    fn fetch_warnings(&mut self) {
+        let now = Instant::now();
+        if self.warning_map.is_none()
+            && let Some((map, at)) = warning_areas::load(&self.warning_file, WARNINGS_MAX_AGE)
+        {
+            let age = (Utc::now() - at).to_std().unwrap_or_default();
+            self.warnings_due = Some(now + WARNINGS_REFRESH.saturating_sub(age));
+            self.set_warnings(map);
+        }
+        if self.warnings_busy || self.warnings_due.is_some_and(|t| t > now) {
+            return;
+        }
+        self.warnings_busy = true;
+        let (http, tx, file) = (self.http.clone(), self.tx.clone(), self.warning_file.clone());
+        self.runtime.spawn(async move {
+            let _ = tx.send(Command::WarningsLoaded(warning_areas::fetch(&http, &file).await));
+        });
+    }
+
+    fn warnings_loaded(&mut self, result: Result<WarningMap>) {
+        self.warnings_busy = false;
+        match result {
+            Ok(map) => {
+                self.warnings_due = Some(Instant::now() + WARNINGS_REFRESH);
+                self.set_warnings(map);
+                self.problem_over();
+            }
+            Err(error) => {
+                tracing::warn!(%error, "[Radar] Warnings failed");
+                self.warnings_due = Some(Instant::now() + WARNINGS_RETRY);
+                if self.warning_map.is_none() {
+                    self.problem_shown = true;
+                    self.emit(Event::Notice(Notice::Failed {
+                        text: format!("Warnings could not be loaded: {error}"),
+                    }));
+                }
             }
         }
-        if let (true, Some(frame)) = (self.config.smooth && k > 0.01, &b) {
-            tiles::compose(&view, &frame.layer, &self.store, &mut out, opacity * k);
-        }
-        for (layer, (z, x, y)) in missing {
-            self.request(&layer, z, x, y, false);
-        }
-        out
+    }
+
+    fn set_warnings(&mut self, map: WarningMap) {
+        let map = Arc::new(map);
+        self.warning_map = Some(Arc::clone(&map));
+        self.slots[Kind::Warnings.index()].dirty = true;
+        self.emit(Event::Warnings(Some(map)));
+    }
+
+    /// The shapes drawn for the view, sharp at every zoom.
+    fn render_warnings(&mut self) {
+        let Some(map) = self.warning_map.clone() else {
+            // Drawn when the shapes come; until then nothing is to do.
+            self.slots[Kind::Warnings.index()].dirty = false;
+            return;
+        };
+        let view = self.view;
+        let big = layers::big_view(&view, Kind::Warnings);
+        let extent = big.extent(0.0);
+        let rgba = warning_layer::draw(&map, &extent, big.width, big.height);
+        let slot = &mut self.slots[Kind::Warnings.index()];
+        slot.dirty = false;
+        slot.drawn = Some(Instant::now());
+        slot.shown = Some((extent, view.zoom));
+        self.emit(Event::Layer {
+            kind: Kind::Warnings,
+            picture: Some((
+                Picture {
+                    width: big.width,
+                    height: big.height,
+                    rgba: Arc::new(rgba),
+                },
+                extent,
+            )),
+            time: None,
+        });
     }
 }
 
@@ -1383,4 +1546,13 @@ fn rate_table() -> &'static [Option<u8>] {
             .map(|i| palette::index_of(dwd::rate(f32::from(i) / 4.0)))
             .collect()
     })
+}
+
+/// Runs a closure when dropped, for timing a function with several ways out.
+struct Defer<F: FnMut()>(F);
+
+impl<F: FnMut()> Drop for Defer<F> {
+    fn drop(&mut self) {
+        (self.0)();
+    }
 }

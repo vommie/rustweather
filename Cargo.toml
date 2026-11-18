@@ -64,3 +64,10 @@ panic = "deny"
 lto = "thin"
 codegen-units = 4
 strip = true
+
+# Optimized like a release, without its slow linking, for timing tests on the desktop.
+[profile.quick]
+inherits = "dev"
+opt-level = 3
+debug = false
+incremental = true
