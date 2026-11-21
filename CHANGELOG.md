@@ -5,6 +5,16 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- The radar shows rain for all of Europe at once: the DWD within reach of its radars, RainViewer elsewhere, blended over
+  about 30 km at the edge. Before, the middle of the map picked one source, so the rain of the neighbors vanished as soon as
+  Germany came into the middle. Pointing at the legend shows the edge as an orange line.
+- The timeline runs in 5-minute steps for both sources. Outside of Germany the forecast moves RainViewer's last picture on
+  along its motion for up to an hour, fading over the second half (RainViewer no longer has a forecast of its own).
+- RainViewer pictures are fetched half a screen around the view, so panning shows sharp rain at once, and not where the
+  DWD counts.
+
 ## [0.1.11] - 2026-11-18
 
 ### Changed

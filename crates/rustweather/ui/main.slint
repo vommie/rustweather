@@ -164,6 +164,7 @@ export component MainWindow inherits Window {
     callback banner-act();
     callback warnings-close();
     callback hover(length, length);
+    callback seam(bool);
     callback pick-map(int);
     callback map-picker(bool);
 
@@ -275,6 +276,7 @@ export component MainWindow inherits Window {
                     banner-act => { root.banner-act(); }
                     warnings-close => { root.warnings-close(); }
                     hover(x, y) => { root.hover(x, y); }
+                    seam(on) => { root.seam(on); }
                     pick-map(i) => { root.pick-map(i); }
                     map-picker(open) => { root.map-picker(open); }
                 }

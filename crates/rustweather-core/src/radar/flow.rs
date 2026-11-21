@@ -211,6 +211,26 @@ pub fn blend(a: &[u8], b: &[u8], width: usize, height: usize, flow: &Flow, k: f3
     out
 }
 
+/// `b` moved on along `flow` by `steps` frame steps, for the time after the last frame.
+pub fn advect(b: &[u8], width: usize, height: usize, flow: &Flow, steps: f32, opacity: f32) -> Vec<u8> {
+    let mut out = vec![0u8; width * height * 4];
+    out.par_chunks_mut(width * 4).enumerate().for_each(|(y, line)| {
+        for (x, pixel) in line.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+            let (fx, fy) = (x as f32, y as f32);
+            let (vx, vy) = flow.at(fx, fy);
+            let from = sample(b, width, height, fx - vx * steps, fy - vy * steps);
+            if from[3] <= 0.002 {
+                continue;
+            }
+            for c in 0..3 {
+                pixel[c] = (from[c] / from[3]).clamp(0.0, 255.0) as u8;
+            }
+            pixel[3] = (from[3] * opacity * 255.0).clamp(0.0, 255.0) as u8;
+        }
+    });
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -233,7 +253,7 @@ mod tests {
         rgba
     }
 
-    fn centre(rgba: &[u8]) -> (f32, f32) {
+    fn center(rgba: &[u8]) -> (f32, f32) {
         let (mut sx, mut sy, mut n) = (0.0, 0.0, 0.0);
         for (i, p) in rgba.as_chunks::<4>().0.iter().enumerate() {
             let a = f32::from(p[3]);
@@ -257,7 +277,7 @@ mod tests {
         let flow = estimate(&a, &b, W, H);
         let xs: Vec<f32> = [0.0, 0.25, 0.5, 0.75, 1.0]
             .iter()
-            .map(|k| centre(&blend(&a, &b, W, H, &flow, *k, 1.0)).0)
+            .map(|k| center(&blend(&a, &b, W, H, &flow, *k, 1.0)).0)
             .collect();
         assert!(xs.windows(2).all(|p| p[1] >= p[0] - 0.3), "{xs:?}");
         assert!((xs[2] - 108.0).abs() < 2.5, "halfway: {xs:?}");
@@ -270,6 +290,14 @@ mod tests {
         let flow = estimate(&empty, &empty, W, H);
         assert_eq!(flow.at(50.0, 50.0), (0.0, 0.0));
         assert!(blend(&empty, &empty, W, H, &flow, 0.5, 1.0).iter().all(|v| *v == 0));
+    }
+
+    #[test]
+    fn after_the_last_frame_the_shower_keeps_going() {
+        let (a, b) = (shower(100.0, 80.0), shower(116.0, 80.0));
+        let flow = estimate(&a, &b, W, H);
+        let ahead = center(&advect(&b, W, H, &flow, 1.0, 1.0)).0;
+        assert!((ahead - 132.0).abs() < 2.5, "{ahead}");
     }
 
     #[test]

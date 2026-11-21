@@ -198,7 +198,7 @@ export component SettingsPage inherits Rectangle {
             if SettingsState.page == 3: Page {
                 title: "Radar";
                 Card {
-                    SettingRow { label: "Source"; tip: "Where the rain comes from. Auto uses the DWD over Germany and RainViewer elsewhere";
+                    SettingRow { label: "Source"; tip: "Where the rain comes from. Auto joins both: the DWD within reach of its radars, RainViewer elsewhere, blended at the edge";
                         Choice { items: ["Auto", "DWD", "RainViewer"]; current: SettingsState.data.source; selected(i) => { SettingsState.set-int("source", i); } } }
                     SettingRow { label: "Rain colors"; tip: "The color scale of the rain on the map"; Choice { items: ["Classic", "Calm", "Blue"]; current: SettingsState.data.palette; selected(i) => { SettingsState.set-int("palette", i); } } }
                     SettingRow { label: "Rain opacity"; tip: "How strongly the rain covers the map"; Slider { width: 200px; minimum: 20; maximum: 100; value: SettingsState.data.opacity; moved(v) => { SettingsState.set-float("opacity", v); } } }

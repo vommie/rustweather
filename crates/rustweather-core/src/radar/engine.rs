@@ -1,6 +1,7 @@
 //! The radar's worker thread. The UI sends commands, the worker keeps the frames, renders pictures and reports events; the
 //! newest command always wins, so dragging the map never queues work. It fetches only while the radar is on screen.
 
+use std::cell::RefCell;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -13,6 +14,7 @@ use super::clouds;
 use super::dwd::{self, Lut, Projector};
 use super::layers::{self, KINDS, Kind};
 use super::model::{self, Model};
+use super::mosaic::{self, Weights};
 use super::motion::{self, Field};
 use super::palette::{self, Ramp};
 use super::rainviewer;
@@ -25,7 +27,7 @@ use super::{flow, warning_layer};
 use crate::error::{Error, Result};
 use crate::http::Http;
 use crate::map::tiles::{self, Layer, Store};
-use crate::map::{Extent, View, in_germany, labels, vector};
+use crate::map::{Extent, View, labels, vector};
 use crate::settings::{Basemap, RadarSource, RainPalette};
 use crate::sources::warning_areas::{self, WarningMap};
 
@@ -56,6 +58,8 @@ const WARNINGS_MAX_AGE: Duration = Duration::from_secs(60 * 60);
 /// A layer tile that failed is asked for again after this, once the store lets it.
 /// From this zoom one cell of the DWD grid (1 km) covers more than two pixels, and is drawn smooth.
 const SMOOTH_FROM_ZOOM: f64 = 7.5;
+/// RainViewer tiles are asked for this far around the view (user decision 2026-11-21: half a screen on each side).
+const RV_MARGIN: f64 = 0.5;
 const TILE_RETRY: Duration = Duration::from_secs(32);
 
 #[derive(Debug, Clone, PartialEq)]
@@ -151,6 +155,8 @@ pub enum Event {
         frames: Vec<FrameInfo>,
         live: usize,
         source: String,
+        /// Where the shown moment lies in the new timeline, when it changed.
+        position: Option<f32>,
     },
     Frame {
         index: usize,
@@ -171,6 +177,8 @@ pub enum Command {
     /// The screen is locked: nothing is fetched or animated until it is unlocked.
     Away(bool),
     Reload,
+    /// The pointer rests on the legend, or left it.
+    Seam(bool),
     Probe {
         lon: f64,
         lat: f64,
@@ -281,6 +289,12 @@ pub fn start(setup: Setup, events: impl Fn(Event) + Send + 'static) -> Result<Ha
         warning_file: setup.cache_dir.join("warnings.json"),
         warnings_busy: false,
         warnings_due: None,
+        mosaic_weights: RefCell::new(None),
+        seam: false,
+        timeline: Vec::new(),
+        dwd_busy: false,
+        rv_busy: false,
+        shown_source: String::new(),
     };
     std::thread::Builder::new()
         .name("radar".into())
@@ -293,7 +307,11 @@ pub fn start(setup: Setup, events: impl Fn(Event) + Send + 'static) -> Result<Ha
 enum Provider {
     Dwd,
     RainViewer,
+    /// Both at once, joined by the reach of the DWD's radars (`mosaic.rs`).
+    Mosaic,
 }
+
+mod mixed;
 
 struct Worker {
     rx: Receiver<Command>,
@@ -358,6 +376,15 @@ struct Worker {
     warning_file: PathBuf,
     warnings_busy: bool,
     warnings_due: Option<Instant>,
+    mosaic_weights: RefCell<Option<Arc<Weights>>>,
+    /// The pointer rests on the legend: the edge between the sources is drawn.
+    seam: bool,
+    /// The times of the timeline on screen, so a new one keeps the moment that is shown.
+    timeline: Vec<DateTime<Utc>>,
+    dwd_busy: bool,
+    rv_busy: bool,
+    /// The source named in the legend, to notice when panning changes it.
+    shown_source: String,
 }
 
 /// True when the key gets another picture than no key at all.
@@ -398,8 +425,7 @@ impl Worker {
         match self.config.source {
             RadarSource::Dwd => Provider::Dwd,
             RadarSource::RainViewer => Provider::RainViewer,
-            RadarSource::Auto if in_germany(self.view.lon, self.view.lat) => Provider::Dwd,
-            RadarSource::Auto => Provider::RainViewer,
+            RadarSource::Auto => Provider::Mosaic,
         }
     }
 
@@ -457,6 +483,11 @@ impl Worker {
     }
 
     fn apply(&mut self, command: Command) -> bool {
+        match &command {
+            Command::DwdLoaded(_) => self.dwd_busy = false,
+            Command::RvLoaded(_) => self.rv_busy = false,
+            _ => {}
+        }
         match command {
             Command::Close => return false,
             Command::View(view) => {
@@ -557,6 +588,12 @@ impl Worker {
                 self.base_dirty = true;
             }
             Command::Probe { lon, lat } => self.probe(lon, lat),
+            Command::Seam(on) => {
+                if on != self.seam {
+                    self.seam = on;
+                    self.rain_dirty = true;
+                }
+            }
             Command::PreloadGermany => self.preload_germany(),
             Command::DwdLoaded(result) => match result {
                 Ok(frames) => {
@@ -679,6 +716,10 @@ impl Worker {
         match self.kind() {
             Provider::Dwd => self.grid.iter().map(|f| f.time).filter(|t| *t <= Utc::now()).max(),
             Provider::RainViewer => self.rv.last().map(|f| f.time),
+            Provider::Mosaic => {
+                let dwd = self.grid.iter().map(|f| f.time).filter(|t| *t <= Utc::now()).max();
+                dwd.into_iter().chain(self.rv.last().map(|f| f.time)).max()
+            }
         }
     }
 
@@ -694,6 +735,7 @@ impl Worker {
         match self.kind() {
             Provider::Dwd => "DWD",
             Provider::RainViewer => "RainViewer",
+            Provider::Mosaic => return self.mosaic_label(),
         }
         .to_owned()
     }
@@ -727,7 +769,8 @@ impl Worker {
     /// What the radar says about one point of the map.
     fn probe(&self, lon: f64, lat: f64) {
         let title = format!("{lat:.2}°, {lon:.2}°");
-        let text = if self.kind() == Provider::RainViewer {
+        let outside = self.kind() == Provider::Mosaic && mosaic::weight(lon, lat) < 0.5;
+        let text = if self.kind() == Provider::RainViewer || outside {
             "Exact values are available over Germany.".to_owned()
         } else {
             let index = (self.position.max(0.0) as usize).min(self.grid.len().saturating_sub(1));
@@ -1043,7 +1086,13 @@ impl Worker {
             return;
         }
         self.rv_due = None;
-        if self.kind() == Provider::RainViewer && !self.rv.is_empty() {
+        if self.kind() == Provider::Mosaic {
+            self.fetch_missing();
+            if self.source_name() != self.shown_source {
+                self.publish_timeline();
+            }
+        }
+        if self.kind() != Provider::Dwd && !self.rv.is_empty() {
             self.store.new_radar_round();
             self.preload_rv();
             self.report_rv_progress();
@@ -1146,7 +1195,7 @@ impl Worker {
 
     /// The last radar from the disk, so the window has rain before the network answers.
     fn load_cached(&mut self) {
-        if self.kind() == Provider::Dwd
+        if self.kind() != Provider::RainViewer
             && self.grid.is_empty()
             && let Some(frames) = dwd::load_cached(&self.grid_cache)
         {
@@ -1161,32 +1210,33 @@ impl Worker {
         }
         self.fetching = Some(Instant::now());
         self.emit(Event::Notice(Notice::Loading { done: 0, total: 1 }));
-        let (http, tx) = (self.http.clone(), self.tx.clone());
-        match self.kind() {
-            Provider::Dwd => {
-                let cache = self.grid_cache.clone();
-                self.runtime.spawn(async move {
-                    let _ = tx.send(Command::DwdLoaded(dwd::fetch(&http, &cache).await));
-                });
-            }
-            Provider::RainViewer => {
-                self.runtime.spawn(async move {
-                    let _ = tx.send(Command::RvLoaded(rainviewer::frames(&http).await));
-                });
-            }
+        // Only what the view shows: over Spain the DWD is not asked, deep in Germany RainViewer is not.
+        if self.needs_dwd() {
+            self.spawn_dwd();
+        }
+        if self.needs_rv() {
+            self.spawn_rv();
         }
     }
 
     fn publish_timeline(&mut self) {
         let now = Utc::now();
-        let (times, states): (Vec<_>, Vec<_>) = match self.kind() {
-            Provider::Dwd => self.grid.iter().map(|f| (f.time, FrameState::Ready)).unzip(),
-            Provider::RainViewer => self.rv.iter().map(|f| (f.time, self.rv_state(f))).unzip(),
-        };
+        let (times, states) = self.timeline_now();
         let live = times.iter().rposition(|t| *t <= now).unwrap_or(0);
+        // A new timeline keeps the moment on screen, also when it starts earlier or ends later than the old one.
+        let moment = (!self.position.is_nan())
+            .then(|| mosaic::time_at(&self.timeline, self.position))
+            .flatten();
+        let moved = moment
+            .and_then(|t| mosaic::position_of(&times, t))
+            .filter(|p| (*p - self.position).abs() > 0.001 && !self.timeline.is_empty());
+        if let Some(p) = moved {
+            self.position = p;
+        }
         if self.position.is_nan() || self.position as usize >= times.len() {
             self.position = live as f32;
         }
+        self.timeline = times.clone();
         let frames = times
             .into_iter()
             .zip(states)
@@ -1197,32 +1247,56 @@ impl Worker {
             })
             .collect();
         let source = self.source_name();
-        self.emit(Event::Timeline { frames, live, source });
+        self.shown_source = source.clone();
+        self.emit(Event::Timeline {
+            frames,
+            live,
+            source,
+            position: moved,
+        });
+    }
+
+    /// The times of the timeline for the chosen source, and whether each can be drawn.
+    fn timeline_now(&self) -> (Vec<DateTime<Utc>>, Vec<FrameState>) {
+        match self.kind() {
+            Provider::Dwd => self.grid.iter().map(|f| (f.time, FrameState::Ready)).unzip(),
+            Provider::RainViewer => self.rv.iter().map(|f| (f.time, self.rv_state(f))).unzip(),
+            Provider::Mosaic => {
+                let times = self.mosaic_times();
+                let states = self.mosaic_states(&times);
+                (times, states)
+            }
+        }
     }
 
     fn rv_state(&self, frame: &rainviewer::Frame) -> FrameState {
         let z = frame.layer.level(self.view.zoom);
-        let all = tiles::visible(&self.view, &frame.layer, z)
-            .into_iter()
-            .all(|(x, y)| self.store.cached(&frame.layer, z, x.rem_euclid(1 << z), y).is_some());
-        if all { FrameState::Ready } else { FrameState::Missing }
+        if self.rv_missing(&self.view, &frame.layer, z).is_empty() {
+            FrameState::Ready
+        } else {
+            FrameState::Missing
+        }
     }
 
     /// Newest first: the live picture comes before the history.
+    /// With half a screen around the view, so a pan shows sharp rain at once.
     fn preload_rv(&self) {
+        let grow = |pixels: u32| (f64::from(pixels) * (1.0 + 2.0 * RV_MARGIN)).round() as u32;
+        let around = View {
+            width: grow(self.view.width),
+            height: grow(self.view.height),
+            ..self.view
+        };
         for frame in self.rv.iter().rev() {
             let z = frame.layer.level(self.view.zoom);
-            for (x, y) in tiles::visible(&self.view, &frame.layer, z) {
-                let x = x.rem_euclid(1 << z);
-                if self.store.cached(&frame.layer, z, x, y).is_none() {
-                    self.request(&frame.layer, z, x, y, false);
-                }
+            for (x, y) in self.rv_missing(&around, &frame.layer, z) {
+                self.request(&frame.layer, z, x, y, false);
             }
         }
     }
 
     fn report_rv_progress(&self) {
-        let states: Vec<FrameState> = self.rv.iter().map(|f| self.rv_state(f)).collect();
+        let (_, states) = self.timeline_now();
         for (index, state) in states.iter().enumerate() {
             self.emit(Event::Frame { index, state: *state });
         }
@@ -1239,7 +1313,7 @@ impl Worker {
 
     /// Only for what is on screen. Pictures still get drawn from the cache in the background, they just fetch nothing.
     fn request(&self, layer: &Layer, z: i32, x: i64, y: i64, base: bool) {
-        if self.active && !self.away {
+        if self.active && !self.away && (base || self.rv_tile_wanted(z, x, y)) {
             self.fetch_tile(layer, z, x, y, base);
         }
     }
@@ -1322,8 +1396,13 @@ impl Worker {
         }
         let view = self.view;
         let rgba = match self.kind() {
-            Provider::Dwd => self.rain_dwd(),
-            Provider::RainViewer => self.rain_rv(),
+            Provider::Dwd => self.rain_dwd_at(if self.position.is_nan() { 0.0 } else { self.position }),
+            Provider::RainViewer => self.rain_rv_at(if self.position.is_nan() {
+                f32::MAX
+            } else {
+                self.position
+            }),
+            Provider::Mosaic => self.rain_mosaic(),
         };
         self.emit(Event::Rain(Picture {
             width: view.width,
@@ -1332,17 +1411,13 @@ impl Worker {
         }));
     }
 
-    fn rain_dwd(&mut self) -> Vec<u8> {
+    fn rain_dwd_at(&mut self, position: f32) -> Vec<u8> {
         let view = self.view;
         let size = (view.width * view.height * 4) as usize;
         let Some(max) = self.grid.len().checked_sub(1) else {
             return vec![0; size];
         };
-        let position = if self.position.is_nan() {
-            0.0
-        } else {
-            self.position.clamp(0.0, max as f32)
-        };
+        let position = position.clamp(0.0, max as f32);
         let index = position as usize;
         let k = position - index as f32;
         let warp = if self.config.smooth && k > 0.01 && index < max {
@@ -1392,17 +1467,17 @@ impl Worker {
         out
     }
 
-    fn rain_rv(&mut self) -> Vec<u8> {
+    /// RainViewer at a fractional frame; past the last frame its rain is moved on along its motion for up to an hour.
+    fn rain_rv_at(&mut self, position: f32) -> Vec<u8> {
         let view = self.view;
         let size = (view.width * view.height * 4) as usize;
         let Some(max) = self.rv.len().checked_sub(1) else {
             return vec![0; size];
         };
-        let position = if self.position.is_nan() {
-            max as f32
-        } else {
-            self.position.clamp(0.0, max as f32)
-        };
+        if self.kind() == Provider::Mosaic && position > max as f32 + 0.01 && max > 0 {
+            return self.rv_ahead(max, position - max as f32);
+        }
+        let position = position.clamp(0.0, max as f32);
         let index = position as usize;
         let k = position - index as f32;
         // A frame that is not complete yet must not show an empty map: the nearest complete one stands in.
@@ -1448,6 +1523,7 @@ impl Worker {
         let mut rgba = vec![0u8; (view.width * view.height * 4) as usize];
         let missing: Vec<_> = tiles::compose(&view, &frame.layer, &self.store, &mut rgba, 1.0)
             .into_iter()
+            .filter(|(z, x, y)| self.rv_tile_wanted(*z, *x, *y))
             .collect();
         let complete = missing.is_empty();
         for (z, x, y) in missing {
@@ -1458,6 +1534,30 @@ impl Worker {
             self.rv_frames.put(index, Arc::clone(&rgba));
         }
         Some(rgba)
+    }
+
+    /// The last frame moved on by `steps` frame steps, fading after half an hour.
+    fn rv_ahead(&mut self, max: usize, steps: f32) -> Vec<u8> {
+        let view = self.view;
+        let (width, height) = (view.width as usize, view.height as usize);
+        let minutes = f64::from(steps) * self.rv_step_minutes();
+        let fade = mosaic::ahead_fade(minutes) * self.config.opacity;
+        self.rv_frames.keep(&view, max);
+        let (Some(a), Some(b)) = (self.rv_picture(max - 1), self.rv_picture(max)) else {
+            return vec![0; width * height * 4];
+        };
+        if fade <= 0.0 {
+            return vec![0; width * height * 4];
+        }
+        let motion = self.rv_frames.flow(max - 1, &a, &b, width, height);
+        flow::advect(&b, width, height, &motion, steps, fade)
+    }
+
+    fn rv_step_minutes(&self) -> f64 {
+        match self.rv.as_slice() {
+            [a, b, ..] => (b.time - a.time).num_seconds() as f64 / 60.0,
+            _ => 10.0,
+        }
     }
 
     /// The shapes from the disk first, then from the DWD every few minutes while the layer is on screen.

@@ -7,6 +7,7 @@ pub mod engine;
 pub mod flow;
 pub mod layers;
 pub mod model;
+pub mod mosaic;
 pub mod motion;
 pub mod outlook;
 pub mod palette;

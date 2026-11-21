@@ -131,6 +131,10 @@ export component RadarPage inherits Rectangle {
     callback banner-act();
     callback warnings-close();
     callback hover(length, length);
+    /// The pointer rests on the legend: show where the DWD and RainViewer meet.
+    callback seam(bool);
+    property <bool> legend-hover: legend-tip.has-hover && root.source-label == "DWD + RainViewer";
+    changed legend-hover => { root.seam(self.legend-hover); }
     callback pick-map(int);
     callback map-picker(bool);
     property <bool> map-open;
@@ -413,7 +417,7 @@ export component RadarPage inherits Rectangle {
     Rectangle {
         x: root.width - self.width - 8px;
         y: root.height - 42px - self.height - 8px;
-        width: 214px;
+        width: 236px;
         height: 42px + (root.layer-wind ? 24px : 0) + (root.layer-heat ? 24px : 0);
         background: Theme.scrim;
         border-radius: 4px;
@@ -459,6 +463,11 @@ export component RadarPage inherits Rectangle {
                 Text { text: root.heat-ticks[1]; color: Theme.text-muted; font-size: 9px; horizontal-stretch: 1; horizontal-alignment: center; }
                 Text { text: root.heat-ticks[2]; color: Theme.text-muted; font-size: 9px; horizontal-stretch: 1; horizontal-alignment: right; }
             }
+        }
+        legend-tip := TipArea {
+            tip: root.source-label == "DWD + RainViewer"
+                ? "Rain from the DWD within reach of its radars and from RainViewer elsewhere, blended at the edge. The orange line shows where they meet."
+                : "";
         }
     }
 
