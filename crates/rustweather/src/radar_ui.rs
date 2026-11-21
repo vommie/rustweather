@@ -135,7 +135,12 @@ pub fn on_event(app: &App, event: Event) {
                 .collect();
             w.set_cities(ModelRc::new(VecModel::from(cities)));
         }
-        Event::Timeline { frames, live, source } => {
+        Event::Timeline {
+            frames,
+            live,
+            source,
+            position,
+        } => {
             let cells: Vec<FrameCell> = frames.iter().map(|f| cell(f.state, f.forecast)).collect();
             app.frame_count.set(cells.len());
             app.live.set(live);
@@ -143,7 +148,9 @@ pub fn on_event(app: &App, event: Event) {
             w.set_frames(ModelRc::new(VecModel::from(cells)));
             w.set_live(i32::try_from(live).unwrap_or(0));
             w.set_source_label(source.into());
-            if app.position.get() as usize >= frames.len() || app.position.get() == 0.0 {
+            if let Some(p) = position {
+                set_position(app, p);
+            } else if app.position.get() as usize >= frames.len() || app.position.get() == 0.0 {
                 set_position(app, live as f32);
             }
             show_time(app);
@@ -538,6 +545,9 @@ pub fn wire(app: &std::rc::Rc<App>) {
         let scale = app.main.window().scale_factor();
         let (lon, lat) = app.view.get().lonlat_of(f64::from(x * scale), f64::from(y * scale));
         crate::warning_ui::hover_at(&app, lat, lon);
+    });
+    on!(on_seam, |app, on| {
+        app.radar.send(Command::Seam(on));
     });
     on!(on_probe_close, |app| {
         app.probe_at.set(None);
