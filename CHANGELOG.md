@@ -5,6 +5,12 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Zooming in or out by any amount keeps everything that was drawn: the last picture of the map, the labels, the clouds,
+  lightning and RainViewer's rain is scaled into place until the tiles of the new zoom are there, and any coarser tile
+  that is at hand stands in, however coarse. Before, zooming out more than half a level left gaps until the new tiles came.
+
 ### Fixed
 
 - Zooming out no longer empties the rain outside of Germany for up to a minute. Preloading all frames used up RainViewer's

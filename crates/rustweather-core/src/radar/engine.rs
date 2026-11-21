@@ -295,6 +295,8 @@ pub fn start(setup: Setup, events: impl Fn(Event) + Send + 'static) -> Result<Ha
         dwd_busy: false,
         rv_busy: false,
         shown_source: String::new(),
+        base_last: None,
+        labels_last: None,
     };
     std::thread::Builder::new()
         .name("radar".into())
@@ -385,6 +387,9 @@ struct Worker {
     rv_busy: bool,
     /// The source named in the legend, to notice when panning changes it.
     shown_source: String,
+    /// The last map and labels pictures with the id of their layer, scaled into the gaps of the next ones.
+    base_last: Option<(String, tiles::Backdrop)>,
+    labels_last: Option<(String, tiles::Backdrop)>,
 }
 
 /// True when the key gets another picture than no key at all.
@@ -414,6 +419,8 @@ struct Slot {
     checked: Option<Instant>,
     /// A tile failed: the picture is put together again from this time on, which asks for it again.
     retry: Option<Instant>,
+    /// The last picture, scaled into the gaps of the next one until its tiles are there.
+    last: Option<tiles::Backdrop>,
 }
 
 impl Worker {
@@ -926,13 +933,21 @@ impl Worker {
         let view = self.view;
         let big = layers::big_view(&view, kind);
         let mut rgba = vec![0u8; (big.width * big.height * 4) as usize];
-        for (z, x, y) in tiles::compose(&big, &layer, &self.store, &mut rgba, 1.0) {
+        let backdrop = self.slots[kind.index()].last.clone();
+        for (z, x, y) in tiles::compose_over(&big, &layer, &self.store, &mut rgba, 1.0, backdrop.as_ref()) {
             self.request_layer(kind, &layer, z, x, y);
         }
+        let extent = big.extent(0.0);
+        // Kept before softening, so a gap filled from it is not softened twice.
+        self.slots[kind.index()].last = Some(tiles::Backdrop {
+            rgba: Arc::new(rgba.clone()),
+            width: big.width,
+            height: big.height,
+            extent,
+        });
         if kind == Kind::Clouds {
             clouds::soften(&mut rgba, &big);
         }
-        let extent = big.extent(0.0);
         let slot = &mut self.slots[kind.index()];
         slot.dirty = false;
         slot.drawn = Some(Instant::now());
@@ -1372,15 +1387,20 @@ impl Worker {
         }
         let own = base.is_none();
         if let Some(layer) = &base {
-            for (z, x, y) in tiles::compose(&view, layer, &self.store, &mut rgba, 1.0) {
+            let backdrop = self.base_last.take().filter(|(id, _)| *id == layer.id).map(|(_, b)| b);
+            for (z, x, y) in tiles::compose_over(&view, layer, &self.store, &mut rgba, 1.0, backdrop.as_ref()) {
                 self.request(layer, z, x, y, true);
             }
+        }
+        let rgba = Arc::new(rgba);
+        if let Some(layer) = &base {
+            self.base_last = Some((layer.id.clone(), tiles::Backdrop::of_view(Arc::clone(&rgba), &view)));
         }
         self.emit(Event::Base(
             Picture {
                 width: view.width,
                 height: view.height,
-                rgba: Arc::new(rgba),
+                rgba,
             },
             view,
         ));
@@ -1390,13 +1410,20 @@ impl Worker {
         self.emit(Event::Cities(if names { labels::visible(&view) } else { Vec::new() }));
         let labels_picture = labels_layer.map(|layer| {
             let mut rgba = vec![0u8; (view.width * view.height * 4) as usize];
-            for (z, x, y) in tiles::compose(&view, &layer, &self.store, &mut rgba, 1.0) {
+            let backdrop = self
+                .labels_last
+                .take()
+                .filter(|(id, _)| *id == layer.id)
+                .map(|(_, b)| b);
+            for (z, x, y) in tiles::compose_over(&view, &layer, &self.store, &mut rgba, 1.0, backdrop.as_ref()) {
                 self.request(&layer, z, x, y, true);
             }
+            let rgba = Arc::new(rgba);
+            self.labels_last = Some((layer.id.clone(), tiles::Backdrop::of_view(Arc::clone(&rgba), &view)));
             Picture {
                 width: view.width,
                 height: view.height,
-                rgba: Arc::new(rgba),
+                rgba,
             }
         });
         self.emit(Event::Labels(labels_picture));
@@ -1541,7 +1568,8 @@ impl Worker {
         let frame = self.rv.get(index)?.clone();
         let view = self.view;
         let mut rgba = vec![0u8; (view.width * view.height * 4) as usize];
-        let missing: Vec<_> = tiles::compose(&view, &frame.layer, &self.store, &mut rgba, 1.0)
+        let backdrop = self.rv_frames.last(index);
+        let missing: Vec<_> = tiles::compose_over(&view, &frame.layer, &self.store, &mut rgba, 1.0, backdrop.as_ref())
             .into_iter()
             .filter(|(z, x, y)| self.rv_tile_wanted(*z, *x, *y))
             .collect();
@@ -1550,6 +1578,8 @@ impl Worker {
             self.request(&frame.layer, z, x, y, false);
         }
         let rgba = Arc::new(rgba);
+        self.rv_frames
+            .remember(index, tiles::Backdrop::of_view(Arc::clone(&rgba), &view));
         if complete {
             self.rv_frames.put(index, Arc::clone(&rgba));
         }
