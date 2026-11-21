@@ -5,6 +5,12 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Every server now loads in parallel on its own: up to 8 tiles at once from each map and radar server, 6 from each weather
+  service's map server, 2 from the volunteer-run OpenStreetMap and OpenTopoMap servers (as their usage policies ask). Before,
+  all servers shared 8 places (and the weather services 6), so RainViewer could hold up the map and the clouds the lightning.
+
 ## [0.1.13] - 2026-11-21
 
 ### Changed
