@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use super::flow::{self, Flow};
 use crate::map::View;
+use crate::map::tiles::Backdrop;
 
 /// Frames this far from the one on screen are let go.
 const KEEP: usize = 2;
@@ -15,14 +16,18 @@ pub struct RvFrames {
     view: Option<View>,
     pictures: HashMap<usize, Arc<Vec<u8>>>,
     flows: HashMap<usize, Arc<Flow>>,
+    /// Each frame's last picture, also of an older view: it fills the gaps while the tiles of a new zoom load.
+    last: HashMap<usize, Backdrop>,
 }
 
 impl RvFrames {
     /// Forgets everything when the view changed, and the frames far from `index`.
     pub fn keep(&mut self, view: &View, index: usize) {
         if self.view.as_ref() != Some(view) {
+            let last = std::mem::take(&mut self.last);
             *self = Self {
                 view: Some(*view),
+                last,
                 ..Self::default()
             };
         }
@@ -38,6 +43,14 @@ impl RvFrames {
 
     pub fn picture(&self, index: usize) -> Option<Arc<Vec<u8>>> {
         self.pictures.get(&index).cloned()
+    }
+
+    pub fn last(&self, index: usize) -> Option<Backdrop> {
+        self.last.get(&index).cloned()
+    }
+
+    pub fn remember(&mut self, index: usize, picture: Backdrop) {
+        self.last.insert(index, picture);
     }
 
     pub fn put(&mut self, index: usize, rgba: Arc<Vec<u8>>) {

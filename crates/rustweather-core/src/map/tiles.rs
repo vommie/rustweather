@@ -397,6 +397,8 @@ fn view_unit(view: &View, px: f64, py: f64) -> (f64, f64) {
 #[derive(Clone)]
 struct Source {
     tile: Arc<Tile>,
+    /// How many levels coarser than wanted.
+    up: i32,
     /// Offset and scale in tile fractions.
     ox: f64,
     oy: f64,
@@ -406,13 +408,15 @@ struct Source {
 fn best_tile(store: &Store, layer: &Layer, z: i32, x: i64, y: i64) -> Option<Source> {
     let wrap = |v: i64, z: i32| v.rem_euclid(1i64 << z.clamp(0, 30));
     let wx = wrap(x, z);
-    for up in 0..=4.min(z) {
+    // Any coarser level counts: a blurry picture is better than an empty one.
+    for up in 0..=z {
         let (zz, shift) = (z - up, 1i64 << up);
         let (px, py) = (wx.div_euclid(shift), y.div_euclid(shift));
         if let Some(tile) = store.cached(layer, zz, px, py) {
             let span = 1.0 / shift as f64;
             return Some(Source {
                 tile,
+                up,
                 ox: wx.rem_euclid(shift) as f64 * span,
                 oy: y.rem_euclid(shift) as f64 * span,
                 span,
@@ -450,8 +454,57 @@ fn sample(tile: &Tile, u: f64, v: f64) -> [f32; 4] {
     out
 }
 
+/// The last picture of a layer and the stretch of the map it shows. Until the tiles of a new view are there, it is scaled
+/// into place, zoomed in or out by any amount, so nothing is ever empty that was drawn before.
+#[derive(Clone)]
+pub struct Backdrop {
+    pub rgba: Arc<Vec<u8>>,
+    pub width: u32,
+    pub height: u32,
+    pub extent: super::Extent,
+}
+
+impl Backdrop {
+    pub fn of_view(rgba: Arc<Vec<u8>>, view: &View) -> Self {
+        Self {
+            rgba,
+            width: view.width,
+            height: view.height,
+            extent: view.extent(0.0),
+        }
+    }
+
+    /// The color at a point of the unit square, if the picture shows it.
+    fn at(&self, ux: f64, uy: f64) -> Option<[f32; 4]> {
+        let e = &self.extent;
+        let (fx, fy) = ((ux - e.x0) / (e.x1 - e.x0), (uy - e.y0) / (e.y1 - e.y0));
+        if !(0.0..1.0).contains(&fx) || !(0.0..1.0).contains(&fy) {
+            return None;
+        }
+        let (x, y) = (
+            (fx * f64::from(self.width)) as usize,
+            (fy * f64::from(self.height)) as usize,
+        );
+        let i = (y * self.width as usize + x) * 4;
+        let p = self.rgba.get(i..i + 4)?;
+        Some([f32::from(p[0]), f32::from(p[1]), f32::from(p[2]), f32::from(p[3])])
+    }
+}
+
 /// Draws a layer over `dst` (straight RGBA, the view's size). Returns the tiles that are missing.
 pub fn compose(view: &View, layer: &Layer, store: &Store, dst: &mut [u8], opacity: f32) -> Vec<(i32, i64, i64)> {
+    compose_over(view, layer, store, dst, opacity, None)
+}
+
+/// Like `compose`; where the right tile is missing, `backdrop` stands in before a tile more than one level coarser.
+pub fn compose_over(
+    view: &View,
+    layer: &Layer,
+    store: &Store,
+    dst: &mut [u8],
+    opacity: f32,
+    backdrop: Option<&Backdrop>,
+) -> Vec<(i32, i64, i64)> {
     let z = layer.level(view.zoom);
     let per_unit = f64::from(1u32 << z.clamp(0, 30));
     let mut sources: HashMap<(i64, i64), Source> = HashMap::new();
@@ -473,10 +526,16 @@ pub fn compose(view: &View, layer: &Layer, store: &Store, dst: &mut [u8], opacit
         for (px, out) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
             let tx = (x0 * per_unit) + (px as f64 + 0.5) * step;
             let (tile_x, fx) = (tx.floor() as i64, tx - tx.floor());
-            let Some(s) = sources.get(&(tile_x, tile_y)) else {
-                continue;
+            let source = sources.get(&(tile_x, tile_y));
+            let old = || backdrop.and_then(|b| b.at(tx / per_unit, ty / per_unit));
+            let c = match source {
+                Some(s) if s.up <= 1 => sample(&s.tile, s.ox + fx * s.span, s.oy + fy * s.span),
+                Some(s) => old().unwrap_or_else(|| sample(&s.tile, s.ox + fx * s.span, s.oy + fy * s.span)),
+                None => match old() {
+                    Some(c) => c,
+                    None => continue,
+                },
             };
-            let c = sample(&s.tile, s.ox + fx * s.span, s.oy + fy * s.span);
             let a = c[3] / 255.0 * opacity;
             if a <= 0.0 {
                 continue;
@@ -534,5 +593,32 @@ pub fn prune(cache_dir: &Path, max_bytes: u64, radar_age: Duration) {
         if (expired || total > max_bytes) && std::fs::remove_file(&path).is_ok() {
             total = total.saturating_sub(size);
         }
+    }
+}
+
+#[cfg(test)]
+mod backdrop_tests {
+    use super::*;
+
+    #[test]
+    fn the_last_picture_answers_only_for_its_own_stretch() {
+        // A 2 × 1 picture: red on the left, blue on the right, over x 0.25..0.5 and y 0.25..0.375.
+        let rgba = Arc::new(vec![255, 0, 0, 255, 0, 0, 255, 255]);
+        let extent = crate::map::Extent {
+            x0: 0.25,
+            y0: 0.25,
+            x1: 0.5,
+            y1: 0.375,
+        };
+        let b = Backdrop {
+            rgba,
+            width: 2,
+            height: 1,
+            extent,
+        };
+        assert_eq!(b.at(0.3, 0.3), Some([255.0, 0.0, 0.0, 255.0]));
+        assert_eq!(b.at(0.45, 0.3), Some([0.0, 0.0, 255.0, 255.0]));
+        assert_eq!(b.at(0.1, 0.3), None);
+        assert_eq!(b.at(0.3, 0.4), None);
     }
 }
