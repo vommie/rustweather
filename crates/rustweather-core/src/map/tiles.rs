@@ -94,8 +94,9 @@ struct Budget {
 }
 
 impl Budget {
-    /// Waits for a free slot; false when `wanted` says the request has become pointless meanwhile.
-    async fn take(&self, wanted: impl Fn() -> bool) -> bool {
+    /// Waits for a free slot; false when `wanted` says the request has become pointless meanwhile. `reserve` slots of the minute
+    /// stay free for others, so preloading never holds up what is on screen.
+    async fn take(&self, wanted: impl Fn() -> bool, reserve: impl Fn() -> usize) -> bool {
         loop {
             if !wanted() {
                 return false;
@@ -104,7 +105,7 @@ impl Budget {
                 let mut sent = self.sent.lock();
                 let now = Instant::now();
                 sent.retain(|t| now - *t < Duration::from_secs(60));
-                if sent.len() < self.per_minute {
+                if sent.len() + reserve() < self.per_minute {
                     sent.push(now);
                     None
                 } else {
@@ -138,7 +139,12 @@ pub struct Store {
     /// Requests of an older round wait in vain: the map has moved on.
     radar_round: AtomicU64,
     radar_budget: Budget,
+    /// Radar tiles that the picture on screen waits for: they may use the whole budget, preloads leave a share of it free.
+    urgent: Mutex<HashSet<String>>,
 }
+
+/// Radar requests per minute that preloading leaves to what is on screen.
+const URGENT_SHARE: usize = 30;
 
 fn decode(bytes: &[u8]) -> Option<Tile> {
     let image = image::load_from_memory(bytes).ok()?.into_rgba8();
@@ -168,6 +174,7 @@ impl Store {
             gate: Arc::new(Semaphore::new(8)),
             map_server_gate: Arc::new(Semaphore::new(6)),
             radar_round: AtomicU64::new(0),
+            urgent: Mutex::new(HashSet::new()),
             radar_budget: Budget {
                 per_minute: 90,
                 sent: Mutex::new(Vec::new()),
@@ -190,7 +197,7 @@ impl Store {
         Some(tile)
     }
 
-    /// Fetches in the background and calls `done(ok)` afterwards.
+    /// Fetches in the background and calls `done(ok)` afterwards. The picture on screen waits for it.
     pub fn request(
         self: &Arc<Self>,
         runtime: &tokio::runtime::Handle,
@@ -200,7 +207,38 @@ impl Store {
         y: i64,
         done: impl FnOnce(Result<()>) + Send + 'static,
     ) -> bool {
+        self.request_with(runtime, layer, z, x, y, true, done)
+    }
+
+    /// Like `request`, for a picture that is not on screen yet: it leaves part of a limited service's budget free.
+    pub fn preload(
+        self: &Arc<Self>,
+        runtime: &tokio::runtime::Handle,
+        layer: &Layer,
+        z: i32,
+        x: i64,
+        y: i64,
+        done: impl FnOnce(Result<()>) + Send + 'static,
+    ) -> bool {
+        self.request_with(runtime, layer, z, x, y, false, done)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn request_with(
+        self: &Arc<Self>,
+        runtime: &tokio::runtime::Handle,
+        layer: &Layer,
+        z: i32,
+        x: i64,
+        y: i64,
+        urgent: bool,
+        done: impl FnOnce(Result<()>) + Send + 'static,
+    ) -> bool {
         let k = key(&layer.id, z, x, y);
+        if urgent {
+            // Also a preload already waiting for its turn moves ahead.
+            self.urgent.lock().insert(k.clone());
+        }
         if self.retry_at.lock().get(&k).is_some_and(|t| *t > Instant::now()) || !self.busy.lock().insert(k.clone()) {
             return false;
         }
@@ -224,10 +262,20 @@ impl Store {
             if limited
                 && !store
                     .radar_budget
-                    .take(|| store.radar_round.load(Ordering::Relaxed) == round)
+                    .take(
+                        || store.radar_round.load(Ordering::Relaxed) == round,
+                        || {
+                            if store.urgent.lock().contains(&k) {
+                                0
+                            } else {
+                                URGENT_SHARE
+                            }
+                        },
+                    )
                     .await
             {
                 store.busy.lock().remove(&k);
+                store.urgent.lock().remove(&k);
                 return;
             }
             let gate = if is_map_server(&url) {
@@ -243,6 +291,7 @@ impl Store {
                 Post::Clouds => store.fetch_clouds(&k, &url, &extra, z).await,
             };
             store.busy.lock().remove(&k);
+            store.urgent.lock().remove(&k);
             if result.is_err() {
                 store
                     .retry_at

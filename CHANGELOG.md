@@ -5,6 +5,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Zooming out no longer empties the rain outside of Germany for up to a minute. Preloading all frames used up RainViewer's
+  request limit, so the picture on screen waited behind it; it now goes first, and preloading always leaves part of the limit free.
+
 ## [0.1.12] - 2026-11-21
 
 ### Changed
