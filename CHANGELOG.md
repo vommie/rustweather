@@ -5,6 +5,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.14] - 2026-11-21
+
 ### Changed
 
 - Every server now loads in parallel on its own: up to 8 tiles at once from each map and radar server, 6 from each weather
@@ -230,7 +232,8 @@ First release, replacing the `weather_tray.py` script.
 - Arch package with `build-package.sh`.
 - The application menu entry offers Radar and Settings as actions; a second start opens what it asks for.
 
-[Unreleased]: https://github.com/vommie/rustweather/compare/v0.1.13...HEAD
+[Unreleased]: https://github.com/vommie/rustweather/compare/v0.1.14...HEAD
+[0.1.14]: https://github.com/vommie/rustweather/compare/v0.1.13...v0.1.14
 [0.1.13]: https://github.com/vommie/rustweather/compare/v0.1.12...v0.1.13
 [0.1.12]: https://github.com/vommie/rustweather/compare/v0.1.11...v0.1.12
 [0.1.11]: https://github.com/vommie/rustweather/compare/v0.1.10...v0.1.11
