@@ -79,6 +79,19 @@ impl Layer {
     }
 }
 
+/// Requests at once per server: the weather services' map servers take seconds per picture and get fewer, the volunteer-run
+/// map servers ask for few connections in their usage policies.
+fn parallel_for(host: &str, url: &str) -> usize {
+    const VOLUNTEER: [&str; 2] = ["tile.openstreetmap.org", "tile.opentopomap.org"];
+    if VOLUNTEER.contains(&host) {
+        2
+    } else if is_map_server(url) {
+        6
+    } else {
+        8
+    }
+}
+
 fn is_map_server(url: &str) -> bool {
     url.contains("/wms?") || url.contains("/ows?")
 }
@@ -133,9 +146,8 @@ pub struct Store {
     busy: Mutex<HashSet<String>>,
     /// Tiles that failed, with the time from which they may be tried again.
     retry_at: Mutex<HashMap<String, Instant>>,
-    gate: Arc<Semaphore>,
-    /// The DWD's map server takes seconds per tile. It waits on its own, so maps never queue behind it.
-    map_server_gate: Arc<Semaphore>,
+    /// One pool of parallel requests per server, so a slow or busy server never holds up the others.
+    gates: Mutex<HashMap<String, Arc<Semaphore>>>,
     /// Requests of an older round wait in vain: the map has moved on.
     radar_round: AtomicU64,
     radar_budget: Budget,
@@ -171,8 +183,7 @@ impl Store {
             ram: Cache::with_weighter(2048, RAM_BYTES, TileWeight),
             busy: Mutex::new(HashSet::new()),
             retry_at: Mutex::new(HashMap::new()),
-            gate: Arc::new(Semaphore::new(8)),
-            map_server_gate: Arc::new(Semaphore::new(6)),
+            gates: Mutex::new(HashMap::new()),
             radar_round: AtomicU64::new(0),
             urgent: Mutex::new(HashSet::new()),
             radar_budget: Budget {
@@ -278,11 +289,7 @@ impl Store {
                 store.urgent.lock().remove(&k);
                 return;
             }
-            let gate = if is_map_server(&url) {
-                &store.map_server_gate
-            } else {
-                &store.gate
-            };
+            let gate = store.gate(&url);
             let Ok(_permit) = gate.acquire().await else {
                 return;
             };
@@ -353,6 +360,21 @@ impl Store {
         }
         let bytes = self.http.bytes(url).await?;
         self.keep(key, &bytes)
+    }
+
+    /// The pool of the server behind `url`.
+    fn gate(&self, url: &str) -> Arc<Semaphore> {
+        let host = reqwest::Url::parse(url)
+            .ok()
+            .and_then(|u| u.host_str().map(str::to_owned))
+            .unwrap_or_default();
+        let parallel = parallel_for(&host, url);
+        Arc::clone(
+            self.gates
+                .lock()
+                .entry(host)
+                .or_insert_with(|| Arc::new(Semaphore::new(parallel))),
+        )
     }
 
     /// Gives up radar tiles still waiting for their turn, so an old view does not use up the service's limit.
@@ -599,6 +621,22 @@ pub fn prune(cache_dir: &Path, max_bytes: u64, radar_age: Duration) {
 #[cfg(test)]
 mod backdrop_tests {
     use super::*;
+
+    #[test]
+    fn each_server_gets_its_own_share() {
+        assert_eq!(
+            parallel_for("tilecache.rainviewer.com", "https://tilecache.rainviewer.com/v2/x.png"),
+            8
+        );
+        assert_eq!(
+            parallel_for("maps.dwd.de", "https://maps.dwd.de/geoserver/dwd/wms?service=WMS"),
+            6
+        );
+        assert_eq!(
+            parallel_for("tile.openstreetmap.org", "https://tile.openstreetmap.org/1/0/0.png"),
+            2
+        );
+    }
 
     #[test]
     fn the_last_picture_answers_only_for_its_own_stretch() {
