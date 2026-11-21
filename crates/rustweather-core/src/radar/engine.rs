@@ -1279,7 +1279,8 @@ impl Worker {
     }
 
     /// Newest first: the live picture comes before the history.
-    /// With half a screen around the view, so a pan shows sharp rain at once.
+    /// The frame on screen first, with priority; then the other frames, then half a screen around the view, so a pan shows
+    /// sharp rain at once. Preloads leave part of RainViewer's limit free, so zooming never waits behind them.
     fn preload_rv(&self) {
         let grow = |pixels: u32| (f64::from(pixels) * (1.0 + 2.0 * RV_MARGIN)).round() as u32;
         let around = View {
@@ -1287,11 +1288,30 @@ impl Worker {
             height: grow(self.view.height),
             ..self.view
         };
-        for frame in self.rv.iter().rev() {
+        let shown = self.rv_index_on_screen();
+        let urgent = [Some(shown), shown.checked_add(1).filter(|i| *i < self.rv.len())];
+        for frame in urgent.into_iter().flatten().filter_map(|i| self.rv.get(i)) {
             let z = frame.layer.level(self.view.zoom);
-            for (x, y) in self.rv_missing(&around, &frame.layer, z) {
+            for (x, y) in self.rv_missing(&self.view, &frame.layer, z) {
                 self.request(&frame.layer, z, x, y, false);
             }
+        }
+        for view in [&self.view, &around] {
+            for frame in self.rv.iter().rev() {
+                let z = frame.layer.level(self.view.zoom);
+                for (x, y) in self.rv_missing(view, &frame.layer, z) {
+                    self.preload_tile(&frame.layer, z, x, y);
+                }
+            }
+        }
+    }
+
+    fn preload_tile(&self, layer: &Layer, z: i32, x: i64, y: i64) {
+        if self.active && !self.away && self.rv_tile_wanted(z, x, y) {
+            let tx = self.tx.clone();
+            self.store.preload(&self.runtime, layer, z, x, y, move |result| {
+                let _ = tx.send(Command::TileDone { base: false, result });
+            });
         }
     }
 

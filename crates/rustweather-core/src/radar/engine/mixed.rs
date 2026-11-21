@@ -44,6 +44,21 @@ impl Worker {
         self.kind() != Provider::Mosaic || mosaic::tile_needed(z, x, y)
     }
 
+    /// The RainViewer frame the picture on screen is made of.
+    pub(super) fn rv_index_on_screen(&self) -> usize {
+        let max = self.rv.len().saturating_sub(1);
+        let position = match self.kind() {
+            Provider::Mosaic => {
+                mosaic::time_at(&self.timeline, if self.position.is_nan() { 0.0 } else { self.position })
+                    .and_then(|t| mosaic::rv_position(&self.rv_times(), t))
+                    .unwrap_or(max as f32)
+            }
+            _ if self.position.is_nan() => max as f32,
+            _ => self.position,
+        };
+        (position.max(0.0) as usize).min(max)
+    }
+
     fn rv_times(&self) -> Vec<DateTime<Utc>> {
         self.rv.iter().map(|f| f.time).collect()
     }
